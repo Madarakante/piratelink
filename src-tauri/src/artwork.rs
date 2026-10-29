@@ -15,8 +15,9 @@ use image::{DynamicImage, ImageFormat};
 /// The shelf renders covers at ~300 CSS px, so 600 covers 2× displays.
 pub const COVER_MAX_WIDTH: u32 = 600;
 
-/// Heroes are 1920×620 natively; this ceiling only guards against a surprise.
-pub const HERO_MAX_WIDTH: u32 = 1920;
+/// Heroes come in 1920×620 and 3840×1240; the wider ceiling keeps the 4K copy
+/// intact for large or high-DPI windows instead of throwing the pixels away.
+pub const HERO_MAX_WIDTH: u32 = 3840;
 
 /// Decodes `bytes`, downscales if needed, and writes the result into `dir` as
 /// `<stem>.<ext>`. Returns the written path.

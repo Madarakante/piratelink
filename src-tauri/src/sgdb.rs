@@ -19,7 +19,6 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 pub const BASE_URL: &str = "https://www.steamgriddb.com/api/v2";
 pub const COVER_DIMENSIONS: &str = "600x900";
-pub const HERO_DIMENSIONS: &str = "1920x620";
 pub const MAX_LIMIT: u32 = 50;
 
 type Result<T> = std::result::Result<T, SgdbError>;
@@ -91,6 +90,16 @@ pub struct Asset {
     pub thumb: String,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub width: u32,
+    #[serde(default)]
+    pub height: u32,
+}
+
+impl Asset {
+    fn area(&self) -> u64 {
+        self.width as u64 * self.height as u64
+    }
 }
 
 #[derive(Deserialize)]
@@ -162,14 +171,13 @@ impl Sgdb {
         Ok(body.data.unwrap_or_default())
     }
 
-    /// Wide hero art. Note the API's hero aspect is 1920x620, not 16:9.
+    /// Wide hero art. The API's hero aspect is 1920×620, but it also serves
+    /// 3840×1240 copies of many heroes, so the size filter is deliberately
+    /// absent: `pick_best` takes the largest one on offer.
     pub async fn heroes(&self, game_id: i64) -> Result<Vec<Asset>> {
         let url = format!(
-            "{}/heroes/game/{}?types=static&dimensions={}&limit={}",
-            self.base,
-            game_id,
-            encode_segment(HERO_DIMENSIONS),
-            MAX_LIMIT
+            "{}/heroes/game/{}?types=static&limit={}",
+            self.base, game_id, MAX_LIMIT
         );
         let body: Envelope<Vec<Asset>> = self.get_json(&url).await?;
         Ok(body.data.unwrap_or_default())
@@ -377,22 +385,38 @@ mod match_tests {
     }
 }
 
-/// Picks the cover to cache.
+/// Picks the asset to cache: the largest one offered, and the API's first at that
+/// size.
 ///
 /// Do not rank by `score`: the live API returns `0` for every asset (verified
 /// against `/grids/game/4997889`), so a "highest score" sort silently returns
 /// whichever element happened to be last. The API's default order is by votes and
-/// relevance, so the first acceptable entry *is* the best one. Tag filtering stays,
-/// because tagged artwork can still appear at the front.
+/// relevance, so the first acceptable entry at a given size *is* the best one.
+/// Tag filtering stays, because tagged artwork can still appear at the front.
 pub fn pick_best(assets: &[Asset]) -> Option<&Asset> {
-    let is_safe = |a: &&Asset| {
-        !a.tags.iter().any(|t| {
-            let t = t.to_lowercase();
-            t.contains("nsfw") || t.contains("epilepsy") || t.contains("humor")
+    let safe: Vec<&Asset> = assets
+        .iter()
+        .filter(|a| {
+            !a.tags.iter().any(|t| {
+                let t = t.to_lowercase();
+                t.contains("nsfw") || t.contains("epilepsy") || t.contains("humor")
+            })
         })
+        .collect();
+
+    // Tagged artwork outranks nothing: fall back to the full list only when every
+    // candidate is tagged.
+    let pool = if safe.is_empty() {
+        assets.iter().collect::<Vec<_>>()
+    } else {
+        safe
     };
 
-    assets.iter().find(is_safe).or_else(|| assets.first())
+    // Larger first, then the API's own order *within* that size — the site votes
+    // decide which 4K hero is the right one, resolution only decides that we do
+    // not stretch a 1080p copy over a 1440p window while a 4K one is on offer.
+    let largest = pool.iter().map(|a| a.area()).max()?;
+    pool.into_iter().find(|a| a.area() == largest)
 }
 
 /// Percent-encodes everything outside the unreserved set, which is what a path
@@ -461,6 +485,8 @@ mod tests {
                 url: "u10".into(),
                 thumb: "t10".into(),
                 tags: vec![],
+                width: 0,
+                height: 0,
             },
             Asset {
                 id: 11,
@@ -469,6 +495,8 @@ mod tests {
                 url: "u11".into(),
                 thumb: "t11".into(),
                 tags: vec![],
+                width: 0,
+                height: 0,
             },
         ];
         assert_eq!(pick_best(&assets).unwrap().id, 10);
@@ -484,6 +512,9 @@ mod tests {
                 url: "u1".into(),
                 thumb: "t1".into(),
                 tags: vec!["nsfw".into()],
+                // Larger than the safe one on purpose: tagging must veto size.
+                width: 3840,
+                height: 1240,
             },
             Asset {
                 id: 2,
@@ -492,9 +523,68 @@ mod tests {
                 url: "u2".into(),
                 thumb: "t2".into(),
                 tags: vec![],
+                width: 1920,
+                height: 620,
             },
         ];
         assert_eq!(pick_best(&assets).unwrap().id, 2);
+    }
+
+    #[test]
+    fn pick_best_prefers_the_4k_hero_over_api_order() {
+        // SteamGridDB lists 1920x620 and 3840x1240 copies of the same hero, and
+        // the 4K one is not necessarily first. Order decides *which* hero; size
+        // decides that a 3:1 image is not upscaled over a 1440p window.
+        let assets = vec![
+            Asset {
+                id: 20,
+                score: 0,
+                style: "alternate".into(),
+                url: "u20".into(),
+                thumb: "t20".into(),
+                tags: vec![],
+                width: 1920,
+                height: 620,
+            },
+            Asset {
+                id: 21,
+                score: 0,
+                style: "alternate".into(),
+                url: "u21".into(),
+                thumb: "t21".into(),
+                tags: vec![],
+                width: 3840,
+                height: 1240,
+            },
+        ];
+        assert_eq!(pick_best(&assets).unwrap().id, 21);
+    }
+
+    #[test]
+    fn pick_best_keeps_api_order_among_equal_sizes() {
+        let assets = vec![
+            Asset {
+                id: 30,
+                score: 0,
+                style: "alternate".into(),
+                url: "u30".into(),
+                thumb: "t30".into(),
+                tags: vec![],
+                width: 3840,
+                height: 1240,
+            },
+            Asset {
+                id: 31,
+                score: 500,
+                style: "alternate".into(),
+                url: "u31".into(),
+                thumb: "t31".into(),
+                tags: vec![],
+                width: 3840,
+                height: 1240,
+            },
+        ];
+        assert_eq!(pick_best(&assets).unwrap().id, 30);
     }
 
     #[test]

@@ -46,9 +46,9 @@
 
   .layer {
     position: absolute;
-    inset: -2%;
-    width: 104%;
-    height: 104%;
+    inset: 0;
+    width: 100%;
+    height: 100%;
     object-fit: cover;
   }
 

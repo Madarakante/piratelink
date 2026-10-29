@@ -19,7 +19,7 @@ disk. The memory target is not hit yet.
 | --- | --- |
 | Shelf | Filmstrip of uniform plates on one baseline; the selection is pinned to the left margin, wraps at both ends, ~6 covers decoded |
 | Library | SQLite under the app data dir; add a game by picking its `.exe`, correct the suggested title, remove entries |
-| Artwork | SteamGridDB cover + hero, re-encoded to WebP at ingest, served from the cache |
+| Artwork | SteamGridDB cover at 600 px and hero at up to 3840 px (the 4K copy is preferred over the 1920×620 one), stored without resampling and losslessly as WebP, served from the cache |
 | Input | Keyboard (`←` `→` `Enter` `Space` `Esc` `M` `N` `F3`) **and** gamepad (Xbox / DualSense / DualShock, standard mapping, D-pad or left stick, hold-to-repeat). The hint bar labels itself for whichever device was used last, so a pad shows `× ○ □ △` or `A B X Y`; R3 opens Add games, though the `.exe` picker itself is the Windows dialog and still needs a mouse |
 | Motion | Custom critically-damped spring in `src/lib/spring.svelte.ts`; parks its `requestAnimationFrame` loop the moment it settles |
 | Audio | One 27 KB OGG sprite, five cues, sliced at playback |
@@ -44,10 +44,10 @@ their own and are unaffected.
 
 | Metric | Value |
 | --- | --- |
-| Frontend bundle (`dist/`) | 301 KB across 20 files |
-| Main JS / CSS | 77.6 KB (29 KB gzip) / 28.3 KB (6 KB gzip) |
+| Frontend bundle (`dist/`) | 309 KB across 19 files |
+| Main JS / CSS | 102 KB (37 KB gzip) / 30 KB (6.8 KB gzip) |
 | Release `.exe` (`tauri build --no-bundle`) | 7.1 MB (image, HTTP/TLS and SQLite linked in) |
-| Decoded art on screen | 1 hero + up to 5 covers ≈ 12 MB raster |
+| Decoded hero | 4.5 MB raster at 1920×620, 18.2 MB at 3840×1240 — the backdrop is the largest single allocation on screen |
 | Renderer JS heap | 4.5 MB (`F3` overlay) |
 | **Whole-process RAM** | **461 MB — over the 200 MB target** |
 | `scanner` walk, `D:\Games` (10 installs) | ~50 ms, 13 candidates (backend only — the UI adds one `.exe` at a time) |
@@ -262,7 +262,7 @@ cargo test --lib -- --ignored                  # 2 passed (real API, ~5 s)
 
 ### How a game is matched to its artwork
 
-Two steps, and both had to be right:
+Three steps, and all of them had to be right:
 
 1. **Which folder is the title.** `title_for_exe` takes the folder holding the
    executable only if that folder is not structural (`Game`, `bin`, `x64`,
@@ -276,9 +276,17 @@ Two steps, and both had to be right:
    Below that, `fetch_artwork` returns an error instead of attaching something
    plausible but wrong.
 
-Both were wrong once, in a way that silently attached an unrelated game's cover:
-searching "Game" returns a title literally named *GAME*. A wrong cover is worse
-than no cover — it gets cached, and nothing on screen says it is wrong.
+3. **Which copy of the asset.** Heroes come in 1920×620 and 3840×1240, and the
+   bigger one is not always first. `pick_best` takes the **largest** asset and
+   uses the API's vote order to choose between copies of the same size, so a 3:1
+   hero is not stretched over a 1440p window while a 4K one is on offer. Nothing
+   is resampled at that point: a 3840-wide hero is stored as-is (losslessly), and
+   the window downscales it.
+
+Both the title and the match were wrong once, in a way that silently attached an
+unrelated game's cover: searching "Game" returns a title literally named *GAME*. A
+wrong cover is worse than no cover — it gets cached, and nothing on screen says it
+is wrong.
 
 If a cover is wrong: fix the title in the sheet before adding — the SteamGridDB
 search uses the field, not the filename. Afterwards, open the game and use

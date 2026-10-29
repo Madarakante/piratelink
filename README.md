@@ -446,3 +446,13 @@ is locked) is reported in the sheet, not the log.
 - **Phase 3 — Co-op engine** ❌ dropped (see above)
 - **Phase 4 — Social & hosting** — `axum` presence server, binary packets, auth
   before the tunnel, stable hostname
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE). Copyright 2026 Madarakante.
+
+You can use, modify and redistribute this, including commercially, provided you keep
+the license and attribution notices. The license covers this source tree only: it
+grants nothing for the games the launcher starts, the artwork SteamGridDB serves, or
+the emulator (Ryujinx is MIT-licensed, separately).
+

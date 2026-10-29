@@ -33,13 +33,12 @@
   let target = 0;
 
   /**
-   * Six plates fill the row edge to edge. Sizing from the content width (rather
-   * than from the window) is what keeps that true at any size.
+   * Six plates fill the row edge to edge, so the strip never ends in blank space
+   * on a wide window. Width decides the size; the height term only takes over
+   * when the window is so short that a 3:2 plate would eat the headline.
    */
   const cardW = $derived(
-    Math.round(
-      Math.min(208, Math.max(112, Math.min((viewport - 112) / 6.82, (viewportH - 430) / 2.4))),
-    ),
+    Math.round(Math.max(104, Math.min((viewport - 112) / 6.82, (viewportH - 430) / 1.5))),
   );
   const cardH = $derived(Math.round(cardW * 1.5));
   const gap = $derived(Math.round(cardW * 0.16));

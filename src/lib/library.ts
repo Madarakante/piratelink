@@ -43,7 +43,8 @@ export type ExecutableInfo = {
   already_in_library: boolean;
 };
 
-const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+/** True inside the Tauri shell; false in the browser preview, where every command is faked. */
+export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const core = await import("@tauri-apps/api/core");
@@ -204,14 +205,15 @@ export async function pickExecutables(): Promise<string[]> {
 export async function inspectExecutable(path: string): Promise<ExecutableInfo> {
   if (!isTauri) {
     const known = PREVIEW_EXECUTABLES.find((exe) => exe.path === path);
-    if (known) return known;
+    const already = previewGames.some((game) => game.executable === path);
+    if (known) return { ...known, already_in_library: already };
     const file = path.split(/[\\/]/).pop() ?? path;
     return {
       path,
       title: file.replace(/\.exe$/i, ""),
       install_dir: path.replace(/[\\/][^\\/]+$/, ""),
       size_bytes: 0,
-      already_in_library: false,
+      already_in_library: already,
     };
   }
 

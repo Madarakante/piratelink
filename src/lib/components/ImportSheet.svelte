@@ -4,6 +4,7 @@
     addGame,
     fetchArtwork,
     inspectExecutable,
+    isTauri,
     pickExecutables,
     type ExecutableInfo,
   } from "../library";
@@ -21,7 +22,9 @@
   } = $props();
 
   type Step = "choose" | "review" | "importing" | "done";
-  type Entry = ExecutableInfo & { include: boolean };
+  /** `suggested` keeps the folder-derived name, so clearing the field cannot
+   *  fall back to the filename. */
+  type Entry = ExecutableInfo & { include: boolean; suggested: string };
 
   let step = $state<Step>("choose");
   let entries = $state<Entry[]>([]);
@@ -86,7 +89,7 @@
       if (entries.some((entry) => entry.path === path)) continue;
       try {
         const info = await inspectExecutable(path);
-        fresh.push({ ...info, include: !info.already_in_library });
+        fresh.push({ ...info, include: !info.already_in_library, suggested: info.title });
       } catch (err) {
         error = `${path} — ${err instanceof Error ? err.message : String(err)}`;
       }
@@ -117,7 +120,7 @@
     artFailed = 0;
 
     for (const entry of chosen) {
-      const title = entry.title.trim() || entry.path.split(/[\\/]/).pop() || "Untitled";
+      const title = entry.title.trim() || entry.suggested || "Untitled";
       label = title;
       try {
         const id = await addGame(entry.path, title);
@@ -183,14 +186,25 @@
           </p>
           <div class="row">
             <button class="btn" onclick={chooseFiles}>Choose executable</button>
-            <span class="note">Pick one, or several at once.</span>
+            <span class="note">
+              {#if isTauri}
+                Pick one, or several at once.
+              {:else}
+                Browser preview — these paths are demo data, so the dialog is simulated.
+                Run the built app to pick real files.
+              {/if}
+            </span>
           </div>
         {:else if step === "review"}
           <div class="toolbar">
-            <button class="quiet" onclick={toggleAll} disabled={!selectable.length}>
-              {allSelected ? "Select none" : "Select all"}
-            </button>
-            <span class="label">{chosen.length} of {selectable.length} selected</span>
+            {#if selectable.length}
+              <button class="quiet" onclick={toggleAll}>
+                {allSelected ? "Select none" : "Select all"}
+              </button>
+              <span class="label">{chosen.length} of {selectable.length} selected</span>
+            {:else}
+              <span class="label empty">Already in your library — nothing to add</span>
+            {/if}
           </div>
 
           <ul class="list scroll-thin">
@@ -230,10 +244,14 @@
             {/each}
           </ul>
 
-          <div class="row end">
+          <div class="row end footer">
             <button class="quiet" onclick={chooseFiles}>Another file</button>
             <button class="btn" onclick={addSelected} disabled={chosen.length === 0}>
-              Add {chosen.length} {chosen.length === 1 ? "game" : "games"}
+              {#if chosen.length}
+                Add {chosen.length} {chosen.length === 1 ? "game" : "games"}
+              {:else}
+                Add games
+              {/if}
             </button>
           </div>
         {:else if step === "importing"}
@@ -345,8 +363,11 @@
     cursor: default;
   }
 
+  /* `flex: 1` keeps the review list scrollable inside the capped sheet while the
+     footer stays put. */
   .content {
     display: flex;
+    flex: 1;
     flex-direction: column;
     min-height: 0;
     padding: 22px 24px 24px;
@@ -398,7 +419,28 @@
     min-width: 0;
   }
 
+  .row .btn {
+    flex: none;
+    white-space: nowrap;
+  }
+
+  .row .note {
+    flex: 1 1 auto;
+    max-width: 46ch;
+    margin: 0;
+  }
+
+  .row.footer {
+    margin-top: auto;
+    padding-top: 20px;
+  }
+
   .row.end {
+    justify-content: flex-end;
+  }
+
+  /* The review step carries a secondary action on the left. */
+  .row.end.footer {
     justify-content: space-between;
   }
 
@@ -417,12 +459,17 @@
     margin: 20px 0 4px;
   }
 
+  .toolbar .label.empty {
+    margin-left: auto;
+  }
+
   .list {
     list-style: none;
+    flex: 1 1 auto;
+    min-height: 0;
     margin: 0;
     padding: 0;
     overflow-y: auto;
-    max-height: 340px;
     border-top: 1px solid var(--line);
   }
 

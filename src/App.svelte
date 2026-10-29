@@ -4,7 +4,7 @@
   import { credits, type Game } from "./lib/games";
   import { fetchArtwork, launchGame, loadLibrary, removeGame, type LibrarySource } from "./lib/library";
   import { audio } from "./lib/audio";
-  import { bindInput, gamepadConnected, type Action } from "./lib/input";
+  import { bindInput, connectedPad, type Action, type Device, type PadFamily } from "./lib/input";
   import Backdrop from "./lib/components/Backdrop.svelte";
   import TopBar from "./lib/components/TopBar.svelte";
   import Carousel from "./lib/components/Carousel.svelte";
@@ -19,6 +19,8 @@
   let muted = $state(false);
   let booting = $state(true);
   let pad = $state(false);
+  let device = $state<Device>("keyboard");
+  let family = $state<PadFamily>("xbox");
   let stats = $state(false);
   let heapMB = $state<number | null>(null);
   let toast = $state<{ id: number; title: string; body: string } | null>(null);
@@ -181,7 +183,7 @@
   }
 
   onMount(() => {
-    const stop = bindInput(handle);
+    const stop = bindInput(handle, (next) => (device = next));
     void audio.load();
     void reload();
 
@@ -189,11 +191,24 @@
     window.addEventListener("pointerdown", unlock, { once: true });
 
     const bootTimer = setTimeout(() => (booting = false), 260);
-    const padTimer = setInterval(() => (pad = gamepadConnected()), 1500);
+
+    // Pads appear only after their first button press in Chromium, so poll for
+    // late arrivals and take the event path when the browser offers it.
+    const syncPad = () => {
+      const info = connectedPad();
+      pad = info !== null;
+      if (info) family = info.family;
+    };
+    syncPad();
+    const padTimer = setInterval(syncPad, 1500);
+    window.addEventListener("gamepadconnected", syncPad);
+    window.addEventListener("gamepaddisconnected", syncPad);
 
     return () => {
       stop();
       window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("gamepadconnected", syncPad);
+      window.removeEventListener("gamepaddisconnected", syncPad);
       clearTimeout(bootTimer);
       clearInterval(padTimer);
     };
@@ -300,7 +315,7 @@
     {/if}
   </main>
 
-  <HintBar gamepad={pad} {index} total={games.length} />
+  <HintBar gamepad={pad} {device} {family} {index} total={games.length} />
 
   {#if current}
     <DetailOverlay
@@ -310,6 +325,8 @@
       onPlay={launch}
       onRefreshArt={() => refreshArtwork(current)}
       onRemove={() => removeEntry(current)}
+      {device}
+      {family}
     />
   {/if}
 

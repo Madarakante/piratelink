@@ -20,7 +20,7 @@ yet.
 | Shelf | Filmstrip of uniform plates on one baseline; the selection is pinned to the left margin, wraps at both ends, ~6 covers decoded |
 | Library | SQLite under the app data dir; scan a folder, confirm candidates, remove entries |
 | Artwork | SteamGridDB cover + hero, re-encoded to WebP at ingest, served from the cache |
-| Input | Keyboard (`←` `→` `Enter` `Esc` `M` `N` `F3`) **and** gamepad (Xbox / DualSense / DualShock, standard mapping, hold-to-repeat) |
+| Input | Keyboard (`←` `→` `Enter` `Space` `Esc` `M` `N` `F3`) **and** gamepad (Xbox / DualSense / DualShock, standard mapping, D-pad or left stick, hold-to-repeat). The hint bar labels itself for whichever device was used last, so a pad shows `× ○ □ △` or `A B X Y` |
 | Motion | Custom critically-damped spring in `src/lib/spring.svelte.ts`; parks its `requestAnimationFrame` loop the moment it settles |
 | Audio | One 27 KB OGG sprite, five cues, sliced at playback |
 | Window | Frameless, custom titlebar, drag region, native min/max/close |

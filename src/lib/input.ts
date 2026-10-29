@@ -3,7 +3,8 @@
  *
  * A PS5-style shelf is a controller-first UI, so gamepad support is part of the
  * shell, not polish: the same `Action` stream drives both devices and the UI has
- * exactly one place to react.
+ * exactly one place to react. The pipeline also reports which device was last
+ * used, so the shelf can label its buttons the way that device names them.
  */
 
 export type Action =
@@ -15,6 +16,41 @@ export type Action =
   | "mute"
   | "notify" // demo: simulate a friend coming online
   | "stats"; // renderer heap readout
+
+export type Device = "keyboard" | "gamepad";
+export type PadFamily = "playstation" | "xbox";
+
+/** Face buttons and two system buttons, named the way the pad names them. */
+export type FaceButtons = {
+  confirm: string;
+  back: string;
+  play: string;
+  chime: string;
+  share: string;
+  menu: string;
+};
+
+const FACE: Record<PadFamily, FaceButtons> = {
+  playstation: { confirm: "×", back: "○", play: "□", chime: "△", share: "Share", menu: "Options" },
+  xbox: { confirm: "A", back: "B", play: "X", chime: "Y", share: "View", menu: "Menu" },
+};
+
+export function faceButtons(family: PadFamily): FaceButtons {
+  return FACE[family];
+}
+
+/** Sony pads report a vendor id in the name on Windows; everything else reads as Xbox. */
+function familyOf(id: string): PadFamily {
+  return /dualsense|dualshock|playstation|sony|054c/i.test(id) ? "playstation" : "xbox";
+}
+
+export function connectedPad(): { id: string; family: PadFamily } | null {
+  const pads = navigator.getGamepads?.() ?? [];
+  for (const pad of pads) {
+    if (pad?.connected) return { id: pad.id, family: familyOf(pad.id) };
+  }
+  return null;
+}
 
 const KEY_MAP: Record<string, Action> = {
   ArrowLeft: "prev",
@@ -36,26 +72,43 @@ const PAD_BUTTON_MAP: Partial<Record<number, Action>> = {
   3: "notify", // Triangle / Y
   4: "prev", // L1
   5: "next", // R1
-  8: "mute", // Share / Back
+  8: "mute", // Share / View
+  9: "stats", // Options / Menu
   12: "prev", // D-pad up
   13: "next", // D-pad down
   14: "prev", // D-pad left
   15: "next", // D-pad right
 };
 
+/** Left stick is browsable too; the held map gives it the same repeat as the D-pad. */
+const STICK_DEAD = 0.55;
+const STICK_LEFT = -2;
+const STICK_RIGHT = -1;
+
 const DEFAULT_REPEAT_DELAY = 380;
 const DEFAULT_REPEAT_RATE = 110;
 
 type HeldButton = { since: number; next: number };
 
-export function bindInput(onAction: (action: Action) => void): () => void {
+export function bindInput(
+  onAction: (action: Action) => void,
+  onDevice?: (device: Device) => void,
+): () => void {
   const held = new Map<number, HeldButton>();
   let raf = 0;
   let lastPad = -1;
   let disposed = false;
+  let device: Device | null = null;
 
   function fire(action: Action) {
     if (!disposed) onAction(action);
+  }
+
+  /** Only tells the UI when the device actually changes, not on every press. */
+  function report(next: Device) {
+    if (device === next) return;
+    device = next;
+    onDevice?.(next);
   }
 
   function onKeyDown(e: KeyboardEvent) {
@@ -66,7 +119,28 @@ export function bindInput(onAction: (action: Action) => void): () => void {
     const action = KEY_MAP[e.code];
     if (!action) return;
     e.preventDefault();
+    report("keyboard");
     fire(action);
+  }
+
+  /** Fire on press, then repeat while held — one path for buttons and the stick. */
+  function step(key: number, action: Action, down: boolean, now: number) {
+    const state = held.get(key);
+
+    if (!down) {
+      if (state) held.delete(key);
+      return;
+    }
+
+    report("gamepad");
+
+    if (!state) {
+      held.set(key, { since: now, next: now + DEFAULT_REPEAT_DELAY });
+      fire(action);
+    } else if (now >= state.next) {
+      state.next = now + DEFAULT_REPEAT_RATE;
+      fire(action);
+    }
   }
 
   function poll() {
@@ -94,23 +168,12 @@ export function bindInput(onAction: (action: Action) => void): () => void {
     for (const [index, button] of pad.buttons.entries()) {
       const action = PAD_BUTTON_MAP[index];
       if (!action) continue;
-
-      const down = button.pressed || button.value > 0.5;
-      const state = held.get(index);
-
-      if (!down) {
-        held.delete(index);
-        continue;
-      }
-
-      if (!state) {
-        held.set(index, { since: now, next: now + DEFAULT_REPEAT_DELAY });
-        fire(action);
-      } else if (now >= state.next) {
-        state.next = now + DEFAULT_REPEAT_RATE;
-        fire(action);
-      }
+      step(index, action, button.pressed || button.value > 0.5, now);
     }
+
+    const x = pad.axes[0] ?? 0;
+    step(STICK_RIGHT, "next", x > STICK_DEAD, now);
+    step(STICK_LEFT, "prev", x < -STICK_DEAD, now);
   }
 
   window.addEventListener("keydown", onKeyDown);
@@ -122,9 +185,4 @@ export function bindInput(onAction: (action: Action) => void): () => void {
     cancelAnimationFrame(raf);
     held.clear();
   };
-}
-
-export function gamepadConnected(): boolean {
-  const pads = navigator.getGamepads?.() ?? [];
-  return Array.from(pads).some((p) => p?.connected);
 }

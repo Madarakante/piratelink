@@ -1,22 +1,55 @@
 <script lang="ts">
+  import { faceButtons, type Device, type PadFamily } from "../input";
+
   let {
     gamepad = false,
+    device = "keyboard",
+    family = "xbox",
     index = 0,
     total = 0,
-  }: { gamepad?: boolean; index?: number; total?: number } = $props();
+  }: {
+    gamepad?: boolean;
+    device?: Device;
+    family?: PadFamily;
+    index?: number;
+    total?: number;
+  } = $props();
 
   const pad2 = (n: number) => String(n).padStart(2, "0");
+
+  /**
+   * The bar is a caption for whichever device was used last, so a pad owner sees
+   * the pad's own button names instead of a keyboard they are not touching.
+   */
+  const hints = $derived.by(() => {
+    if (device === "gamepad") {
+      const f = faceButtons(family);
+      return [
+        { key: "← →", label: "Browse" },
+        { key: f.confirm, label: "Info" },
+        { key: f.play, label: "Play" },
+        { key: f.share, label: "Mute" },
+        { key: f.chime, label: "Chime" },
+        { key: f.menu, label: "Stats" },
+      ];
+    }
+    return [
+      { key: "← →", label: "Browse" },
+      { key: "↵", label: "Info" },
+      { key: "Space", label: "Play" },
+      { key: "M", label: "Mute" },
+      { key: "N", label: "Chime" },
+      { key: "F3", label: "Stats" },
+    ];
+  });
 </script>
 
 <!-- Keys are plain text, not keycap boxes: the hint bar is a caption, not a toy. -->
 <footer class="hints">
   {#if total > 0}
-    <span><b>← →</b>Browse</span>
-    <span><b>↵</b>Play</span>
-    <span><b>Esc</b>Info</span>
-    <span><b>M</b>Mute</span>
-    <span><b>N</b>Chime</span>
-    <span><b>F3</b>Stats</span>
+    {#each hints as hint (hint.label)}
+      <span><b>{hint.key}</b>{hint.label}</span>
+    {/each}
   {/if}
   <span class="spacer"></span>
 

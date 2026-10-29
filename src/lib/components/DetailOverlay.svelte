@@ -2,6 +2,7 @@
   import { fade, fly } from "svelte/transition";
   import type { Game } from "../games";
   import { credits } from "../games";
+  import { faceButtons, type Device, type PadFamily } from "../input";
 
   let {
     game,
@@ -10,6 +11,8 @@
     onPlay,
     onRefreshArt,
     onRemove,
+    device = "keyboard",
+    family = "xbox",
   }: {
     game: Game;
     open: boolean;
@@ -17,7 +20,11 @@
     onPlay: () => void;
     onRefreshArt?: () => void;
     onRemove?: () => void;
+    device?: Device;
+    family?: PadFamily;
   } = $props();
+
+  const backKey = $derived(device === "gamepad" ? faceButtons(family).back : "Esc");
 
   const lastPlayed = (value: string) =>
     !value ? "—" : /^never/i.test(value) ? "Never" : value.replace(/^played\s*/i, "");
@@ -39,7 +46,7 @@
     <div class="sheet" transition:fly={{ y: 14, duration: 240 }}>
       <header>
         <span class="label">Record</span>
-        <button class="quiet" onclick={onClose}>Close — Esc</button>
+        <button class="quiet" onclick={onClose}>Close — {backKey}</button>
       </header>
 
       <div class="body">

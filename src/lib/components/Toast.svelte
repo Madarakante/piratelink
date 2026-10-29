@@ -14,13 +14,8 @@
   });
 </script>
 
-<div class="toast glass" transition:fly={{ y: -14, duration: 260 }} role="status">
-  <div class="badge" aria-hidden="true">
-    <svg viewBox="0 0 24 24" width="14" height="14">
-      <circle cx="12" cy="8.5" r="3.4" fill="currentColor" />
-      <path d="M4.5 20c0-4 3.4-6.2 7.5-6.2s7.5 2.2 7.5 6.2z" fill="currentColor" />
-    </svg>
-  </div>
+<div class="toast panel" transition:fly={{ y: 10, duration: 200 }} role="status">
+  <span class="bar" aria-hidden="true"></span>
   <div class="txt">
     <strong>{title}</strong>
     <span>{body}</span>
@@ -30,41 +25,37 @@
 <style>
   .toast {
     position: fixed;
-    top: 78px;
-    right: 22px;
+    top: calc(var(--rail) + 12px);
+    right: 18px;
     z-index: 60;
     display: flex;
-    align-items: center;
+    align-items: stretch;
     gap: 12px;
-    min-width: 268px;
-    max-width: 340px;
-    padding: 11px 16px 11px 11px;
-    border-radius: 14px;
-    background: rgba(16, 18, 26, 0.78);
-    border-color: var(--stroke-strong);
-    box-shadow: 0 22px 60px -26px rgba(0, 0, 0, 0.95);
+    min-width: 250px;
+    max-width: 348px;
+    padding: 10px 14px 10px 12px;
+    box-shadow: 0 18px 50px -24px rgba(0, 0, 0, 0.9);
   }
 
-  .badge {
-    display: grid;
-    place-items: center;
-    width: 32px;
-    height: 32px;
+  .bar {
+    width: 2px;
     flex: none;
-    border-radius: 10px;
-    background: var(--accent-soft, rgba(127, 176, 255, 0.2));
-    color: var(--accent);
+    background: var(--accent);
   }
 
   .txt {
     display: flex;
     flex-direction: column;
-    line-height: 1.3;
+    gap: 4px;
+    line-height: 1.4;
   }
 
   .txt strong {
-    font-size: 13px;
-    font-weight: 650;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
   }
 
   .txt span {

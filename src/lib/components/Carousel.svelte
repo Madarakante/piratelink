@@ -19,36 +19,57 @@
   let shelfEl = $state<HTMLDivElement | null>(null);
   let wheelAt = 0;
 
-  const pos = createSpring(0, { stiffness: 170, damping: 26 });
+  const pos = createSpring(0, { stiffness: 190, damping: 28 });
 
-  // Drive the spring from the selected index.
-  $effect(() => {
-    pos.to(index);
-  });
+  /**
+   * The shelf is a filmstrip, not a fan: every cover sits on one baseline at one
+   * size, and the strip slides under a fixed left edge so the selected cover
+   * always aligns with the title above it.
+   *
+   * `target` is deliberately unbounded. Wrapping the *index* (n-1 -> 0) would
+   * make the spring fly backwards through the whole library; tracking an
+   * unbounded cursor lets it travel one pitch in either direction.
+   */
+  let target = 0;
 
-  // Card metrics scale with the window, but stay inside a readable band, and
-  // are height-capped so the shelf never gets clipped at 720p.
+  /**
+   * Six plates fill the row edge to edge. Sizing from the content width (rather
+   * than from the window) is what keeps that true at any size.
+   */
   const cardW = $derived(
-    Math.round(Math.min(296, Math.max(132, Math.min(viewport * 0.181, (viewportH - 360) / 1.5)))),
+    Math.round(
+      Math.min(208, Math.max(112, Math.min((viewport - 112) / 6.82, (viewportH - 430) / 2.4))),
+    ),
   );
   const cardH = $derived(Math.round(cardW * 1.5));
-  const gap = $derived(Math.round(cardW * 1.03));
+  const gap = $derived(Math.round(cardW * 0.16));
+  const pitch = $derived(cardW + gap);
 
-  /** Rendered at most ±3 from the selection; everything else is parked off-canvas. */
-  function cardStyle(i: number): string {
-    const d = i - pos.value;
-    const ad = Math.abs(d);
-    if (ad > 4.2) return "visibility: hidden;";
+  /** Last slot that fits inside the right gutter. */
+  const maxD = $derived(
+    Math.min(games.length - 0.05, (viewport - 112 - cardW) / pitch + 0.02),
+  );
 
-    const scale = Math.max(0.7, 1 - Math.max(0, ad) * 0.135);
-    const lift = Math.min(ad, 3) * -6;
-    const rot = Math.max(-9, Math.min(9, -d * 4.2));
-    const opacity = Math.max(0.18, 1 - ad * 0.24);
+  $effect(() => {
+    const n = games.length;
+    if (!n) return;
+    const settled = ((target % n) + n) % n;
+    let delta = index - settled;
+    if (delta > n / 2) delta -= n;
+    if (delta < -n / 2) delta += n;
+    target += delta;
+    pos.to(target);
+  });
 
+  function styleFor(d: number, active: boolean): string {
+    // A shelf, not a spotlight: every plate stays readable, and hierarchy comes
+    // from the outline plus the accent index rather than from blacking the row
+    // out around the selection.
+    const opacity = active ? 1 : Math.max(0.38, 0.86 - (Math.abs(d) - 1) * 0.12);
     return [
-      `transform: translate3d(${(d * gap).toFixed(2)}px, ${lift.toFixed(2)}px, 0) scale(${scale.toFixed(4)}) rotateY(${rot.toFixed(2)}deg)`,
+      `transform: translate3d(${(d * pitch).toFixed(2)}px, 0, 0)`,
       `opacity: ${opacity.toFixed(3)}`,
-      `z-index: ${Math.round(100 - ad)}`,
+      `z-index: ${Math.round(100 - Math.abs(d))}`,
     ].join("; ");
   }
 
@@ -78,94 +99,75 @@
 
 <svelte:window bind:innerWidth={viewport} bind:innerHeight={viewportH} />
 
-<div class="shelf" bind:this={shelfEl} style="--card-w: {cardW}px; --card-h: {cardH}px;">
-  <div class="glow" aria-hidden="true"></div>
-
+<div
+  class="shelf"
+  bind:this={shelfEl}
+  style="--card-w: {cardW}px; --card-h: {cardH}px;"
+>
   {#each games as game, i (game.id)}
-    {@const nearby = Math.abs(i - index) <= 2}
-    <button
-      class="card"
-      class:active={i === index}
-      style={cardStyle(i)}
-      tabindex={i === index ? 0 : -1}
-      aria-label={game.title}
-      aria-current={i === index}
-      onclick={() => click(i)}
-    >
-      <!--
-        Only ±2 neighbours get a decoded image. Anything further away unmounts its
-        <img>, which is what keeps a 60-title library inside the memory ceiling.
-      -->
-      {#if nearby && game.cover}
-        <img class="cover" src={game.cover} alt="" draggable="false" decoding="async" />
-      {:else}
-        <div class="cover placeholder" style="background: {game.accent}14">
-          <span class="fallback-title">{game.title}</span>
-        </div>
+    <!--
+      Three virtual copies. The strip is unbounded while it animates, so a
+      wrapped move has to place the same game at i - n or i + n. Duplicates are
+      only in the DOM when the library is too short to fill the row; keys are
+      stable, so nothing remounts when the selection changes.
+    -->
+    {#each [-1, 0, 1] as k (k)}
+      {@const d = i + k * games.length - pos.value}
+      {#if d > -1.05 && d < maxD}
+        <button
+          class="card"
+          class:active={i === index}
+          style={styleFor(d, i === index)}
+          tabindex={i === index ? 0 : -1}
+          aria-label={game.title}
+          aria-current={i === index}
+          onclick={() => click(i)}
+        >
+          <span class="frame">
+            {#if game.cover}
+              <img class="cover" src={game.cover} alt="" draggable="false" decoding="async" />
+            {:else}
+              <!-- No artwork: a flat accent block with the title set small. -->
+              <span class="blank" style="background: {game.accent}1c;">
+                <span>{game.title}</span>
+              </span>
+            {/if}
+          </span>
+          <span class="tag">{String(i + 1).padStart(2, "0")}</span>
+        </button>
       {/if}
-
-      <div class="sheen" aria-hidden="true"></div>
-
-      {#if i === index}
-        <div class="ring" style="--c: {game.accent}"></div>
-      {/if}
-    </button>
+    {/each}
   {/each}
 </div>
 
 <style>
   .shelf {
     position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: calc(var(--card-h) + 64px);
-    perspective: 1400px;
-    perspective-origin: 50% 40%;
-  }
-
-  .glow {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: calc(var(--card-w) * 2);
-    height: calc(var(--card-w) * 1.8);
-    transform: translate(-50%, -56%);
-    background: radial-gradient(closest-side, var(--accent-soft, rgba(106, 156, 255, 0.12)), transparent 75%);
-    filter: blur(4px);
-    opacity: 0.7;
-    pointer-events: none;
-    transition: opacity var(--dur-3) var(--ease-out);
+    height: calc(var(--card-h) + 26px);
+    overflow: hidden;
   }
 
   .card {
     position: absolute;
-    left: 50%;
+    top: 0;
+    left: 0;
+    display: block;
     width: var(--card-w);
-    height: var(--card-h);
-    margin-left: calc(var(--card-w) / -2);
     padding: 0;
     border: 0;
-    border-radius: var(--radius-card);
-    background: #0b0d14;
-    overflow: hidden;
+    background: none;
     cursor: pointer;
-    transform-origin: 50% 50%;
-    will-change: transform, opacity;
-    contain: layout paint style;
-    backface-visibility: hidden;
-    box-shadow: 0 24px 60px -28px rgba(0, 0, 0, 0.9);
+    contain: layout paint;
+  }
+
+  .frame {
+    position: relative;
+    display: block;
+    height: var(--card-h);
+    overflow: hidden;
+    background: #0a0b0f;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
     transition: box-shadow var(--dur-2) var(--ease-out);
-  }
-
-  .card:focus-visible {
-    outline: none;
-  }
-
-  .card.active {
-    box-shadow:
-      0 40px 90px -34px rgba(0, 0, 0, 0.95),
-      0 0 0 1px rgba(255, 255, 255, 0.09);
   }
 
   .cover {
@@ -173,47 +175,50 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-    /* Slight zoom hides the 1px seam on fractional scaling. */
-    transform: scale(1.012);
   }
 
-  .cover.placeholder {
-    display: grid;
-    place-items: center;
-    padding: 18px;
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
-  }
-
-  .fallback-title {
-    color: rgba(255, 255, 255, 0.82);
-    font-size: 17px;
-    font-weight: 680;
+  .blank {
+    display: flex;
+    align-items: flex-end;
+    width: 100%;
+    height: 100%;
+    padding: 14px;
+    color: rgba(238, 240, 244, 0.72);
+    font-size: 14px;
+    font-weight: 620;
     letter-spacing: -0.01em;
     line-height: 1.15;
-    text-align: center;
     text-wrap: balance;
   }
 
-  .sheen {
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(160deg, rgba(255, 255, 255, 0.14), transparent 42%, rgba(0, 0, 0, 0.24));
-    pointer-events: none;
+  .card.active .frame {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.62);
   }
 
-  .ring {
-    position: absolute;
-    inset: 0;
-    border-radius: var(--radius-card);
-    box-shadow: inset 0 0 0 2px var(--c);
-    opacity: 0.9;
-    pointer-events: none;
-    animation: ring-in var(--dur-3) var(--ease-out);
+  .card:not(.active):hover .frame {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
   }
 
-  @keyframes ring-in {
-    from {
-      opacity: 0;
-    }
+  .tag {
+    display: block;
+    margin-top: 9px;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    color: rgba(238, 240, 244, 0.34);
+    transition: color var(--dur-2) linear;
+  }
+
+  .card.active .tag {
+    color: var(--accent);
+  }
+
+  .card:focus-visible {
+    outline: none;
+  }
+
+  .card:focus-visible .frame {
+    box-shadow: inset 0 0 0 1px var(--ink);
   }
 </style>

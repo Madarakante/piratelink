@@ -1,12 +1,13 @@
 # PirateLink
 
-A console-style game shelf for Windows: horizontal cover carousel, frosted-glass
-panels, spring physics, and UI sound — built on Tauri v2 + Svelte 5 + Rust, with a
-memory budget it does **not** currently meet (see below).
+A console-style game shelf for Windows: a printed-catalogue layout, one row of
+cover plates, hairline rules, monospace metadata, spring physics, and UI sound —
+built on Tauri v2 + Svelte 5 + Rust, with a memory budget it does **not** currently
+meet (see below).
 
 **Status: Phase 1 and Phase 2 complete.** Scan a folder, confirm what it found, and
-covers are fetched from SteamGridDB and cached to disk. The UI still needs its
-design pass, and the memory target is not hit yet.
+covers are fetched from SteamGridDB and cached to disk. The memory target is not hit
+yet.
 
 ![The shelf](docs/shelf.png)
 
@@ -16,14 +17,14 @@ design pass, and the memory target is not hit yet.
 
 | Area | Detail |
 | --- | --- |
-| Shelf | Centre-focused carousel, spring-driven, wraps at both ends, ±2 covers decoded |
+| Shelf | Filmstrip of uniform plates on one baseline; the selection is pinned to the left margin, wraps at both ends, ~6 covers decoded |
 | Library | SQLite under the app data dir; scan a folder, confirm candidates, remove entries |
 | Artwork | SteamGridDB cover + hero, re-encoded to WebP at ingest, served from the cache |
 | Input | Keyboard (`←` `→` `Enter` `Esc` `M` `N` `F3`) **and** gamepad (Xbox / DualSense / DualShock, standard mapping, hold-to-repeat) |
 | Motion | Custom critically-damped spring in `src/lib/spring.svelte.ts`; parks its `requestAnimationFrame` loop the moment it settles |
 | Audio | One 27 KB OGG sprite, five cues, sliced at playback |
 | Window | Frameless, custom titlebar, drag region, native min/max/close |
-| Boot | ~620 ms splash, then the shelf |
+| Boot | ~260 ms fade, then the shelf |
 
 | | | |
 | --- | --- | --- |
@@ -65,14 +66,17 @@ number we can move deliberately:
 powershell -ExecutionPolicy Bypass -File tools\measure-memory.ps1 -Seconds 30
 ```
 
-Suspects to test next, in order of likely payoff:
+Suspects that were tested in the catalogue rework, and are now gone:
 
 1. **The film-grain overlay** — a full-screen `feTurbulence` SVG with
-   `mix-blend-mode: overlay`, which forces a composited full-screen layer.
-2. **`backdrop-filter` panels** — blur cost scales with surface area; the sheet and
-   overlay scrims are large.
+   `mix-blend-mode: overlay`, forcing a composited full-screen layer. Removed.
+2. **`backdrop-filter` panels** — blur cost scales with surface area. Every glass
+   surface is now solid. Removed.
 3. **The drifting hero** — a 1920x620 layer painting continuously, even when idle.
-4. WebView2 baseline itself (~120-200 MB here before any of our content).
+   The backdrop is static now. Removed.
+
+What is left is the WebView2 baseline itself (~120-200 MB here before any of our
+content). The number needs re-measuring against a Tauri build, not the dev server.
 
 ## Requirements
 
@@ -173,7 +177,7 @@ runtime.
 
 ```
 src/
-  app.css                 design tokens, glass/chip/button primitives
+  app.css                 design tokens, label/panel/button primitives
   App.svelte              state, action dispatch, hero + stage composition
   lib/
     games.ts              Game view model + demo entries for the browser preview
@@ -211,7 +215,7 @@ tools/
 | --- | --- | --- |
 | Framer Motion | Custom spring (~50 lines) | Framer Motion is React-only; it cannot drive Svelte components |
 | Howler.js | Web Audio + `<audio>` fallback | `start(0, offset, duration)` *is* sprite slicing; no dependency, and the fallback covers decoders that reject compressed audio |
-| Tailwind for everything | Tailwind preflight + custom CSS | A bespoke shelf is mostly transforms and `backdrop-filter`; utility soup was not smaller |
+| Tailwind for everything | Tailwind preflight + custom CSS | A bespoke shelf is mostly transforms; utility soup was not smaller |
 | Cloudflare Quick Tunnels | Not yet implemented | They mint a random hostname per restart and are explicitly not for production, which is the wrong fit for a presence endpoint clients must reach repeatedly |
 | Local `.ogg` from Pixabay/Freesound | Generated from oscillators | Zero licences, zero attribution, reproducible from source |
 
@@ -323,10 +327,9 @@ import sheet also abandons a scan after 20 s rather than spinning forever.
 - **Phase 1 — Shell & audio** ✅
 - **Phase 2 — Library & metadata** ✅ SQLite, scanner, SteamGridDB, artwork cache,
   import flow, asset protocol
-- **Memory pass** — next: get 461 MB down toward the 200 MB target, measuring each
-  change
-- **UI pass** — the layout is still the safe, symmetrical one; the shelf needs a
-  real composition idea rather than more polish
+- **Memory pass** — next: re-measure against a build, then work from the 461 MB
+  baseline toward the 200 MB target
+- **UI pass** ✅ catalogue layout: no blur, no glow, no pills; art carries the colour
 - **Phase 3 — Co-op engine** ❌ dropped (see above)
 - **Phase 4 — Social & hosting** — `axum` presence server, binary packets, auth
   before the tunnel, stable hostname

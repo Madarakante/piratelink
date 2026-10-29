@@ -1,48 +1,50 @@
 @import "tailwindcss";
 
 /* ---------------------------------------------------------------------------
-   PirateLink — design tokens
-   Tokens live here so individual components stay markup + layout only.
-   Everything is GPU-composited: transforms and opacity only, no layout animation.
+   PirateLink — catalogue design system.
+
+   The shelf is treated like a printed index: one strict left margin, hairline
+   rules instead of boxes, monospace metadata, and the cover art carrying all of
+   the colour. Chrome stays near-monochrome on purpose.
+
+   Deliberately absent: backdrop blur, accent glows, pill chips, gradient
+   avatars. They are the fastest way to make a launcher look generated rather
+   than designed — and blur is the most expensive thing in the memory budget.
 --------------------------------------------------------------------------- */
 
 @theme {
   --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system,
     "Helvetica Neue", sans-serif;
+  --font-mono: "Cascadia Mono", "Cascadia Code", Consolas, "SFMono-Regular", ui-monospace,
+    monospace;
 }
 
 :root {
-  --bg-0: #04050a;
-  --bg-1: #0a0d17;
+  --bg-0: #07080a;
+  --bg-1: #0c0d11;
+  --panel: #0b0c10;
 
-  --ink: #f4f6ff;
-  --ink-dim: rgba(244, 246, 255, 0.64);
-  --ink-faint: rgba(244, 246, 255, 0.38);
-  --ink-subtle: rgba(244, 246, 255, 0.24);
+  --ink: #eef0f4;
+  --ink-dim: rgba(238, 240, 244, 0.64);
+  --ink-faint: rgba(238, 240, 244, 0.4);
+  --ink-ghost: rgba(238, 240, 244, 0.22);
 
-  --glass: rgba(20, 22, 32, 0.6);
-  --glass-strong: rgba(20, 22, 32, 0.82);
-  --stroke: rgba(255, 255, 255, 0.08);
-  --stroke-strong: rgba(255, 255, 255, 0.15);
-  --stroke-subtle: rgba(255, 255, 255, 0.05);
+  --line: rgba(255, 255, 255, 0.1);
+  --line-strong: rgba(255, 255, 255, 0.24);
 
-  /* Accent palette — cooler, less neon. */
-  --accent: #6a9cff;
-  --accent-soft: rgba(106, 156, 255, 0.18);
-  --accent-subtle: rgba(106, 156, 255, 0.42);
+  /* Overridden per game by App.svelte; neutral by default so the art is the
+     only source of colour. */
+  --accent: #eef0f4;
+  --accent-soft: rgba(238, 240, 244, 0.14);
 
-  /* Warm alternative accent (per-game). */
-  --accent-warm: #ff7a45;
-  --accent-warm-soft: rgba(255, 122, 69, 0.18);
-
-  --radius-card: 20px;
-  --radius-panel: 24px;
+  --gutter: 56px;
+  --rail: 50px;
+  --footer: 40px;
 
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-  --dur-1: 150ms;
-  --dur-2: 280ms;
-  --dur-3: 500ms;
-  --dur-4: 320ms;
+  --dur-1: 120ms;
+  --dur-2: 240ms;
+  --dur-3: 420ms;
 }
 
 * {
@@ -60,6 +62,7 @@ body {
   background: var(--bg-0);
   color: var(--ink);
   font-family: var(--font-display);
+  font-size: 14px;
   font-synthesis-weight: none;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -68,94 +71,115 @@ body {
   cursor: default;
 }
 
-/* Frosted panel. Kept to moderate surfaces: backdrop-filter cost scales with area.
-   Note: do NOT add -webkit-backdrop-filter here. Chromium 155 (WebView2) does not
-   support the prefixed alias, and the CSS minifier keeps the *last* of the two
-   declarations — so shipping both silently removed the blur entirely. */
-.glass {
-  background: var(--glass);
-  border: 1px solid var(--stroke);
-  backdrop-filter: blur(12px) saturate(140%);
-}
+/* --- primitives ---------------------------------------------------------- */
 
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 26px;
-  padding: 0 10px;
-  border-radius: 999px;
-  border: 1px solid var(--stroke);
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--ink-dim);
-  font-size: 12px;
-  font-weight: 550;
-  letter-spacing: 0.01em;
-  white-space: nowrap;
-}
-
-.kbd {
-  display: inline-grid;
-  place-items: center;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 6px;
-  border-radius: 7px;
-  border: 1px solid var(--stroke-strong);
-  background: rgba(255, 255, 255, 0.07);
-  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35);
-  color: var(--ink-dim);
-  font-size: 11px;
-  font-weight: 600;
+/* Monospace metadata: labels, counts, indices. Tabular so numbers never shift. */
+.label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
   font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+/* A panel is a solid surface with one hairline — never frosted. */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
 }
 
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  height: 46px;
-  padding: 0 26px;
+  justify-content: center;
+  gap: 9px;
+  height: 42px;
+  padding: 0 22px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 3px;
   background: var(--ink);
-  color: #06070c;
-  font: inherit;
-  font-size: 15px;
-  font-weight: 650;
-  letter-spacing: 0.01em;
+  color: #07080a;
+  font: 600 11px/1 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
   cursor: pointer;
-  transition: transform var(--dur-1) var(--ease-out), box-shadow var(--dur-2) var(--ease-out),
-    opacity var(--dur-1) linear;
-  will-change: transform;
+  transition:
+    background var(--dur-1) linear,
+    color var(--dur-1) linear,
+    border-color var(--dur-1) linear;
 }
 
 .btn:hover {
-  transform: translateY(-1px) scale(1.015);
-  box-shadow: 0 10px 34px -8px var(--accent-soft);
+  background: #fff;
 }
 
 .btn:active {
-  transform: translateY(0) scale(0.985);
+  background: #d9dce3;
 }
 
-.btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
+.btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .btn-ghost {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+}
+
+.btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.btn-ghost:active {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Text-only control. */
+.quiet {
+  border: 0;
+  background: none;
+  padding: 6px 8px;
+  border-radius: 2px;
+  color: var(--ink-faint);
+  font: 500 10.5px/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    color var(--dur-1) linear,
+    background var(--dur-1) linear;
+}
+
+.quiet:hover {
   background: rgba(255, 255, 255, 0.07);
   color: var(--ink);
-  border: 1px solid var(--stroke);
-  height: 42px;
-  padding: 0 20px;
-  font-size: 14px;
+}
+
+.quiet.danger:hover {
+  background: rgba(217, 45, 32, 0.16);
+  color: #ff9b8a;
 }
 
 .scroll-thin {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+:focus-visible {
+  outline: 1px solid var(--ink);
+  outline-offset: 3px;
 }
 
 .fatal {
@@ -164,7 +188,7 @@ body {
   height: 100%;
   padding: 40px;
   color: #ff9b8a;
-  font: 500 14px/1.6 var(--font-display);
+  font: 500 12px/1.7 var(--font-mono);
   text-align: center;
   white-space: pre-wrap;
 }

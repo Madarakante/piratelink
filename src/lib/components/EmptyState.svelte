@@ -9,117 +9,133 @@
 </script>
 
 <div class="empty">
-  <div class="inner">
-    <p class="eyebrow">Library</p>
-    <h2>Nothing on the shelf yet</h2>
-    <p class="lead">
-      Point PirateLink at a folder once. It ranks the executables it finds and asks before
-      adding anything.
-    </p>
+  <div class="grid">
+    <div class="intro">
+      <h2>Nothing on<br />the shelf</h2>
+      <p class="lead">
+        Point PirateLink at one folder. It ranks the executables it finds and asks before
+        adding anything.
+      </p>
 
-    <ol class="steps">
-      {#each steps as step, i}
-        <li><span class="num">{i + 1}</span><span>{step}</span></li>
-      {/each}
-    </ol>
+      <button class="btn" onclick={onOpen}>
+        Add a folder
+        <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
+          <path d="M1 6h10M7 1.6L11.4 6 7 10.4" stroke="currentColor" stroke-width="1.4" fill="none" />
+        </svg>
+      </button>
 
-    <button class="btn" onclick={onOpen}>
-      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-        <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none" />
-      </svg>
-      Add a games folder
-    </button>
+      <p class="note">
+        No telemetry. The folder stays on your machine; only titles you confirm are sent to
+        SteamGridDB.
+      </p>
+    </div>
 
-    <p class="note">
-      No telemetry. The folder stays on your machine; only titles you confirm are sent to
-      SteamGridDB.
-    </p>
+    <!-- The steps sit in their own column so the screen is a spread, not a pile. -->
+    <div class="how">
+      <p class="label head">How it works</p>
+      <ol class="steps">
+        {#each steps as step, i}
+          <li><span class="idx num">{String(i + 1).padStart(2, "0")}</span><span>{step}</span></li>
+        {/each}
+      </ol>
+    </div>
   </div>
 </div>
 
 <style>
   .empty {
-    display: grid;
-    place-items: center;
+    display: flex;
+    align-items: center;
     height: 100%;
-    padding: 0 32px;
-    animation: rise 420ms var(--ease-out) both;
+    animation: rise 380ms var(--ease-out) both;
   }
 
   @keyframes rise {
     from {
       opacity: 0;
-      transform: translateY(12px);
+      transform: translateY(8px);
     }
   }
 
-  .inner {
-    max-width: 560px;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    text-align: left;
-  }
-
-  .eyebrow {
-    margin: 0 0 14px;
-    color: var(--accent);
-    font-size: 11px;
-    font-weight: 750;
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
+  .grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 0.78fr);
+    gap: 96px;
+    align-items: start;
+    width: 100%;
   }
 
   h2 {
     margin: 0;
-    font-size: clamp(30px, 3.6vw, 46px);
-    font-weight: 690;
-    letter-spacing: -0.035em;
-    line-height: 1.02;
+    font-size: clamp(34px, 4.4vw, 60px);
+    font-weight: 720;
+    letter-spacing: -0.045em;
+    line-height: 0.94;
+    text-wrap: balance;
   }
 
   .lead {
-    margin: 14px 0 0;
-    max-width: 46ch;
+    margin: 20px 0 0;
+    max-width: 42ch;
     color: var(--ink-dim);
-    font-size: 15px;
+    font-size: 14px;
+    line-height: 1.65;
+  }
+
+  .btn {
+    margin-top: 30px;
+  }
+
+  .note {
+    margin: 22px 0 0;
+    max-width: 46ch;
+    color: var(--ink-ghost);
+    font-size: 11.5px;
     line-height: 1.6;
+  }
+
+  .how {
+    padding-top: 10px;
+  }
+
+  .head {
+    margin: 0 0 14px;
   }
 
   .steps {
     list-style: none;
-    margin: 28px 0 30px;
+    margin: 0;
     padding: 0;
-    display: grid;
-    gap: 12px;
   }
 
   .steps li {
     display: flex;
     align-items: baseline;
-    gap: 12px;
+    gap: 16px;
+    padding: 13px 0;
+    border-top: 1px solid var(--line);
     color: var(--ink-dim);
-    font-size: 13.5px;
+    font-size: 13px;
+    line-height: 1.45;
   }
 
-  .num {
-    display: grid;
-    place-items: center;
-    width: 22px;
-    height: 22px;
+  .steps li:last-child {
+    border-bottom: 1px solid var(--line);
+  }
+
+  .idx {
     flex: none;
-    border-radius: 50%;
-    border: 1px solid var(--stroke-strong);
-    color: var(--ink);
-    font-size: 11px;
-    font-weight: 700;
-    font-variant-numeric: tabular-nums;
+    width: 22px;
+    color: var(--ink-ghost);
+    font-size: 9.5px;
+    letter-spacing: 0.14em;
   }
 
-  .note {
-    margin: 20px 0 0;
-    color: var(--ink-faint);
-    font-size: 11.5px;
-    line-height: 1.5;
+  @media (max-width: 1000px) {
+    .grid {
+      grid-template-columns: 1fr;
+      gap: 40px;
+      align-items: start;
+    }
   }
 </style>

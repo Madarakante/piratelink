@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { fade } from "svelte/transition";
+  import { fade, fly } from "svelte/transition";
   import type { Game } from "../games";
   import { credits } from "../games";
 
@@ -18,117 +18,146 @@
     onRefreshArt?: () => void;
     onRemove?: () => void;
   } = $props();
+
+  const lastPlayed = (value: string) =>
+    !value ? "—" : /^never/i.test(value) ? "Never" : value.replace(/^played\s*/i, "");
 </script>
 
+<!--
+  Details is a full page, not a floating card. A record has a back, so the page
+  wipes the stage and gives the cover real size; the rail stays visible above it
+  because the window is frameless and Esc is not the only way out.
+-->
 {#if open}
-  <div class="scrim" transition:fade={{ duration: 200 }} onclick={onClose} role="presentation"></div>
-
-  <div class="wrap" role="dialog" aria-modal="true" aria-label="{game.title} details">
-    <div class="panel glass" transition:fade={{ duration: 220 }}>
-      <div class="art">
-        {#if game.cover}
-          <img src={game.cover} alt="" draggable="false" />
-        {:else}
-          <div class="art-empty" style="background: {game.accent}22">
-            <span>{game.title}</span>
-          </div>
-        {/if}
-        <div class="art-fade"></div>
-      </div>
+  <div
+    class="wrap"
+    role="dialog"
+    aria-modal="true"
+    aria-label="{game.title} details"
+    transition:fade={{ duration: 160 }}
+  >
+    <div class="sheet" transition:fly={{ y: 14, duration: 240 }}>
+      <header>
+        <span class="label">Record</span>
+        <button class="quiet" onclick={onClose}>Close — Esc</button>
+      </header>
 
       <div class="body">
-        {#if game.genre}<p class="eyebrow">{game.genre}</p>{/if}
-        <h2>{game.title}</h2>
-        {#if game.subtitle}<p class="sub">{game.subtitle}</p>{/if}
-        {#if game.description}<p class="desc">{game.description}</p>{/if}
-
-        <div class="stats">
-          <div class="stat">
-            <span class="k">Playtime</span>
-            <span class="v">{credits(game.playtimeMinutes)}</span>
-          </div>
-          <div class="stat">
-            <span class="k">Last played</span>
-            <span class="v">{game.lastPlayed.replace(/^Played\s*/, "")}</span>
-          </div>
-          {#if game.achievements.total > 0}
-            <div class="stat">
-              <span class="k">Achievements</span>
-              <span class="v">{game.achievements.unlocked}/{game.achievements.total}</span>
+        <div class="art">
+          {#if game.cover}
+            <img src={game.cover} alt="" draggable="false" />
+          {:else}
+            <div class="art-empty" style="background: {game.accent}1c">
+              <span>{game.title}</span>
             </div>
           {/if}
         </div>
 
-        {#if game.achievements.total > 0}
-          <div class="progress" aria-hidden="true">
-            <i style="width: {(game.achievements.unlocked / game.achievements.total) * 100}%"></i>
+        <div class="info">
+          {#if game.genre}<p class="kicker">{game.genre}</p>{/if}
+
+          <h2>{game.title}</h2>
+          {#if game.subtitle}<p class="sub">{game.subtitle}</p>{/if}
+          {#if game.description}<p class="desc">{game.description}</p>{/if}
+
+          <dl class="facts">
+            <div>
+              <dt>Playtime</dt>
+              <dd>{game.playtimeMinutes > 0 ? credits(game.playtimeMinutes) : "—"}</dd>
+            </div>
+            <div>
+              <dt>Last played</dt>
+              <dd>{lastPlayed(game.lastPlayed)}</dd>
+            </div>
+            {#if game.achievements.total > 0}
+              <div>
+                <dt>Achievements</dt>
+                <dd>{game.achievements.unlocked} / {game.achievements.total}</dd>
+              </div>
+            {/if}
+          </dl>
+
+          {#if game.achievements.total > 0}
+            <div class="progress" aria-hidden="true">
+              <i style="width: {(game.achievements.unlocked / game.achievements.total) * 100}%"></i>
+            </div>
+          {/if}
+
+          <div class="actions">
+            <button class="btn" onclick={onPlay}>
+              <svg viewBox="0 0 12 14" width="10" height="12" aria-hidden="true">
+                <path d="M1 1l10 6-10 6z" fill="currentColor" />
+              </svg>
+              Play
+            </button>
+            <button class="btn btn-ghost" onclick={onClose}>Back</button>
+
+            <span class="spacer"></span>
+
+            {#if onRefreshArt}
+              <button class="quiet" onclick={onRefreshArt} title="Re-run the SteamGridDB lookup">
+                Refresh artwork
+              </button>
+            {/if}
+            {#if onRemove}
+              <button class="quiet danger" onclick={onRemove} title="Remove from library (files stay on disk)">
+                Remove
+              </button>
+            {/if}
           </div>
-        {/if}
-
-        <div class="actions">
-          <button class="btn" onclick={onPlay}>
-            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
-              <path d="M8 5.5v13l11-6.5z" fill="currentColor" />
-            </svg>
-            Play
-          </button>
-          <button class="btn btn-ghost" onclick={onClose}>Back</button>
-
-          <span class="spacer"></span>
-
-          {#if onRefreshArt}
-            <button class="mini" onclick={onRefreshArt} title="Re-run the SteamGridDB lookup">
-              Refresh artwork
-            </button>
-          {/if}
-          {#if onRemove}
-            <button class="mini danger" onclick={onRemove} title="Remove from library (files stay on disk)">
-              Remove
-            </button>
-          {/if}
         </div>
       </div>
+
+      <!-- A footer closes the page. Without it the record floats in a void. -->
+      <footer>
+        <span class="path num" title={game.executable}>{game.executable || "No executable recorded"}</span>
+        <span class="label">PirateLink</span>
+      </footer>
     </div>
   </div>
 {/if}
 
 <style>
-  .scrim {
-    position: fixed;
-    inset: 0;
-    z-index: 40;
-    background: rgba(3, 4, 9, 0.62);
-    backdrop-filter: blur(3px);
-  }
-
   .wrap {
     position: fixed;
-    inset: 0;
-    z-index: 41;
-    display: grid;
-    place-items: center;
-    padding: 32px;
-    pointer-events: none;
+    top: var(--rail);
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 45;
+    overflow: hidden;
+    background:
+      radial-gradient(58% 52% at 22% 34%, var(--accent-soft), transparent 66%),
+      var(--bg-0);
   }
 
-  .panel {
+  .sheet {
     display: grid;
-    grid-template-columns: 250px minmax(0, 1fr);
-    gap: 26px;
-    width: min(880px, 92vw);
-    padding: 22px;
-    border-radius: var(--radius-panel);
-    background: rgba(14, 16, 24, 0.72);
-    border-color: var(--stroke-strong);
-    box-shadow: 0 50px 120px -40px rgba(0, 0, 0, 0.95);
-    pointer-events: auto;
+    grid-template-rows: 52px minmax(0, 1fr) 48px;
+    height: 100%;
+    padding: 0 var(--gutter);
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .body {
+    display: grid;
+    grid-template-columns: minmax(200px, 320px) minmax(0, 1fr);
+    gap: 64px;
+    align-items: start;
+    overflow-y: auto;
+    padding: 36px 0 28px;
   }
 
   .art {
-    position: relative;
-    border-radius: 14px;
     overflow: hidden;
-    box-shadow: 0 20px 50px -22px rgba(0, 0, 0, 0.9);
+    background: #0a0b0f;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
   }
 
   .art img {
@@ -139,150 +168,141 @@
   }
 
   .art-empty {
-    display: grid;
-    place-items: center;
-    width: 100%;
+    display: flex;
+    align-items: flex-end;
     aspect-ratio: 2 / 3;
-    padding: 32px 24px;
-    color: rgba(244, 246, 255, 0.7);
-    font-size: 18px;
-    font-weight: 600;
-    text-align: center;
+    padding: 22px;
+    color: rgba(238, 240, 244, 0.72);
+    font-size: 19px;
+    font-weight: 650;
+    line-height: 1.15;
     text-wrap: balance;
-    background: radial-gradient(at 30% 20%, var(--accent-soft), transparent 50%),
-      radial-gradient(at 70% 80%, var(--accent-subtle), transparent 50%);
   }
 
-  .art-fade {
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(180deg, transparent 55%, rgba(10, 12, 18, 0.55));
-  }
-
-  .body {
+  .info {
     display: flex;
     flex-direction: column;
     min-width: 0;
-    padding: 6px 8px 4px 0;
+    max-width: 700px;
+    padding-top: 4px;
   }
 
-  .eyebrow {
-    margin: 0 0 6px;
+  .kicker {
+    margin: 0 0 14px;
     color: var(--accent);
-    font-size: 11.5px;
-    font-weight: 700;
-    letter-spacing: 0.14em;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
     text-transform: uppercase;
   }
 
   h2 {
     margin: 0;
-    font-size: clamp(28px, 3.2vw, 40px);
-    font-weight: 680;
-    letter-spacing: -0.025em;
-    line-height: 1.04;
+    font-size: clamp(32px, 4.2vw, 60px);
+    font-weight: 720;
+    letter-spacing: -0.045em;
+    line-height: 0.96;
+    text-wrap: balance;
   }
 
   .sub {
-    margin: 8px 0 0;
+    margin: 12px 0 0;
     color: var(--ink-dim);
     font-size: 14px;
     font-weight: 500;
   }
 
   .desc {
-    margin: 18px 0 0;
-    max-width: 52ch;
-    color: var(--ink-dim);
-    font-size: 13.8px;
-    line-height: 1.62;
-  }
-
-  .stats {
-    display: flex;
-    gap: 26px;
     margin: 22px 0 0;
+    max-width: 54ch;
+    color: var(--ink-dim);
+    font-size: 14px;
+    line-height: 1.7;
   }
 
-  .stat {
+  .facts {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
+    margin: 32px 0 0;
+    padding: 16px 0 0;
+    border-top: 1px solid var(--line);
   }
 
-  .stat .k {
-    color: var(--ink-faint);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
+  .facts > div {
+    margin-right: 34px;
+    padding-right: 34px;
+    border-right: 1px solid var(--line);
+  }
+
+  .facts > div:last-child {
+    margin-right: 0;
+    padding-right: 0;
+    border-right: 0;
+  }
+
+  dt {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
     text-transform: uppercase;
+    color: var(--ink-faint);
   }
 
-  .stat .v {
-    font-size: 14.5px;
+  dd {
+    margin: 8px 0 0;
+    font-size: 15px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
   }
 
   .progress {
     position: relative;
-    height: 3px;
-    margin-top: 18px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.09);
-    overflow: hidden;
+    height: 1px;
+    margin-top: 20px;
+    background: var(--line);
   }
 
   .progress i {
     position: absolute;
     inset: 0 auto 0 0;
-    border-radius: 999px;
     background: var(--accent);
-    box-shadow: 0 0 14px var(--accent);
   }
 
   .actions {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-top: auto;
-    padding-top: 26px;
+    margin-top: 36px;
   }
-
 
   .spacer {
     flex: 1;
   }
 
-  .mini {
-    border: 0;
-    background: none;
-    padding: 6px 8px;
-    border-radius: 8px;
-    color: var(--ink-faint);
-    font: inherit;
-    font-size: 11.5px;
-    font-weight: 550;
-    cursor: pointer;
-    transition: background var(--dur-1) linear, color var(--dur-1) linear;
+  footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    border-top: 1px solid var(--line);
   }
 
-  .mini:hover {
-    background: rgba(255, 255, 255, 0.07);
-    color: var(--ink);
+  .path {
+    overflow: hidden;
+    color: var(--ink-ghost);
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .mini.danger:hover {
-    background: rgba(217, 45, 32, 0.16);
-    color: #ff9b8a;
-  }
-
-  @media (max-width: 760px) {
-    .panel {
+  @media (max-width: 900px) {
+    .body {
       grid-template-columns: 1fr;
+      gap: 28px;
     }
     .art {
-      display: none;
+      max-width: 220px;
     }
   }
 </style>

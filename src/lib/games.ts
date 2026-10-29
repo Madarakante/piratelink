@@ -15,7 +15,7 @@ export type Game = {
   cover: string;
   /** Wide hero art (1920x620 from SteamGridDB), cached to disk. */
   backdrop: string;
-  /** Hex accent used for the glow ring, progress and chips. */
+  /** Hex accent: the only colour the chrome borrows from the artwork. */
   accent: string;
   playtimeMinutes: number;
   lastPlayed: string;

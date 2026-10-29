@@ -31,13 +31,22 @@
   let importOpen = $state(false);
 
   const current = $derived(games[index] ?? null);
-  const accent = $derived(current?.accent ?? "#7fb0ff");
+  const accent = $derived(current?.accent ?? "#eef0f4");
 
-  /** #rrggbb -> rgba() so the accent can also drive translucent glows. */
+  /** #rrggbb -> rgba() so the accent can also drive a translucent wash. */
   function accentSoft(hex: string, alpha: number): string {
     const n = parseInt(hex.slice(1), 16);
-    if (Number.isNaN(n)) return `rgba(127, 176, 255, ${alpha})`;
+    if (Number.isNaN(n)) return `rgba(238, 240, 244, ${alpha})`;
     return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+  }
+
+  const pad2 = (n: number) => String(n).padStart(2, "0");
+
+  /** "Played yesterday" reads as noise under a label already saying Played. */
+  function lastPlayedLabel(value: string): string {
+    if (!value) return "—";
+    if (/^never/i.test(value)) return "Never";
+    return value.replace(/^played\s*/i, "");
   }
 
   function pushToast(title: string, body: string) {
@@ -179,7 +188,7 @@
     const unlock = () => void audio.unlock();
     window.addEventListener("pointerdown", unlock, { once: true });
 
-    const bootTimer = setTimeout(() => (booting = false), 620);
+    const bootTimer = setTimeout(() => (booting = false), 260);
     const padTimer = setInterval(() => (pad = gamepadConnected()), 1500);
 
     return () => {
@@ -202,55 +211,96 @@
 
 <div
   class="app"
-  style="--accent: {accent}; --accent-soft: {accentSoft(accent, 0.22)};"
+  style="--accent: {accent}; --accent-soft: {accentSoft(accent, 0.18)};"
 >
   {#if current}
     <Backdrop game={current} />
   {/if}
 
-  <TopBar {muted} onToggleMute={() => (muted = audio.toggleMuted())} onAdd={() => (importOpen = true)} />
+  <TopBar
+    {muted}
+    count={games.length}
+    preview={source === "demo"}
+    onToggleMute={() => (muted = audio.toggleMuted())}
+    onAdd={() => (importOpen = true)}
+  />
 
   <main class="stage" class:dim={overlay}>
     {#if loading}
-      <div class="center"><span class="spinner" aria-hidden="true"></span></div>
+      <div class="span center"><span class="loader" aria-hidden="true"></span></div>
     {:else if loadError}
-      <div class="center message">
+      <div class="span center message">
+        <p class="label">Library</p>
         <h2>Could not read the library</h2>
-        <p>{loadError}</p>
+        <p class="detail">{loadError}</p>
       </div>
     {:else if games.length === 0}
-      <EmptyState onOpen={() => (importOpen = true)} />
+      <div class="span"><EmptyState onOpen={() => (importOpen = true)} /></div>
     {:else if current}
-      <div class="hero">
+      <section class="hero">
         {#key current.id}
-          <div in:fade={{ duration: 260 }}>
-            {#if current.genre}<p class="eyebrow">{current.genre}</p>{/if}
+          <div class="hero-in" in:fade={{ duration: 220 }}>
+            <div class="kicker">
+              <span class="idx">{pad2(index + 1)}</span>
+              <span class="sep">/</span>
+              <span class="tot">{pad2(games.length)}</span>
+              {#if current.genre}
+                <span class="genre">{current.genre}</span>
+              {/if}
+            </div>
+
             <h1>{current.title}</h1>
+
             {#if current.subtitle && current.subtitle.toLowerCase() !== current.title.toLowerCase()}
               <p class="sub">{current.subtitle}</p>
             {/if}
+
+            <div class="actions">
+              <button class="btn" onclick={launch}>
+                <svg viewBox="0 0 12 14" width="10" height="12" aria-hidden="true">
+                  <path d="M1 1l10 6-10 6z" fill="currentColor" />
+                </svg>
+                Play
+              </button>
+              <button class="btn btn-ghost" onclick={openDetails}>Details</button>
+            </div>
           </div>
         {/key}
+      </section>
 
-        <div class="meta">
-          {#if current.playtimeMinutes > 0}
-            <span class="chip">{credits(current.playtimeMinutes)} played</span>
-          {/if}
+      <!-- Facts live in their own right-hand column. A centred row of chips under
+           the title is the default shape of every generated dashboard; a small
+           record table reads like the back of a sleeve instead. -->
+      {#key current.id}
+        <dl class="facts" in:fade={{ duration: 260 }}>
+          <div>
+            <dt>Playtime</dt>
+            <dd>{current.playtimeMinutes > 0 ? credits(current.playtimeMinutes) : "—"}</dd>
+          </div>
           {#if current.achievements.total > 0}
-            <span class="chip">
-              {current.achievements.unlocked}/{current.achievements.total} achievements
-            </span>
+            <div>
+              <dt>Achievements</dt>
+              <dd>{current.achievements.unlocked} / {current.achievements.total}</dd>
+            </div>
           {/if}
-          <span class="chip">{current.lastPlayed}</span>
-          {#if source === "demo"}<span class="chip demo">preview data</span>{/if}
-        </div>
-      </div>
+          <div>
+            <dt>Last played</dt>
+            <dd>{lastPlayedLabel(current.lastPlayed)}</dd>
+          </div>
+          <div>
+            <dt>Index</dt>
+            <dd>{pad2(index + 1)} of {pad2(games.length)}</dd>
+          </div>
+        </dl>
+      {/key}
 
-      <Carousel {games} {index} onSelect={select} onOpen={openDetails} />
+      <div class="strip">
+        <Carousel {games} {index} onSelect={select} onOpen={openDetails} />
+      </div>
     {/if}
   </main>
 
-  <HintBar gamepad={pad} />
+  <HintBar gamepad={pad} {index} total={games.length} />
 
   {#if current}
     <DetailOverlay
@@ -277,19 +327,19 @@
   {/if}
 
   {#if stats}
-    <div class="stats glass">
-      <span>renderer heap</span>
-      <b>{heapMB === null ? "n/a" : `${heapMB.toFixed(1)} MB`}</b>
-      <span class="sep">·</span>
-      <span>{games.length} titles</span>
-      <span class="sep">·</span>
-      <span>{source}</span>
+    <div class="stats panel">
+      <span class="label">Renderer heap</span>
+      <b class="num">{heapMB === null ? "n/a" : `${heapMB.toFixed(1)} MB`}</b>
+      <span class="divider"></span>
+      <span class="num">{games.length} titles</span>
+      <span class="divider"></span>
+      <span class="num">{source}</span>
     </div>
   {/if}
 
   {#if booting}
-    <div class="boot" transition:fade={{ duration: 420 }}>
-      <span class="mark">PIRATELINK</span>
+    <div class="boot" transition:fade={{ duration: 200 }}>
+      <span class="label">PirateLink</span>
     </div>
   {/if}
 </div>
@@ -297,27 +347,34 @@
 <style>
   .app {
     position: relative;
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-rows: var(--rail) minmax(0, 1fr) var(--footer);
     height: 100%;
     isolation: isolate;
   }
 
+  /* One left margin for the rail, the title and the first cover. That shared
+     edge is what makes the screen read as a layout instead of a stack.
+     Row 1 is the record (headline left, facts right); row 2 is the shelf. */
   .stage {
     position: relative;
     z-index: 10;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 6px;
-    flex: 1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: minmax(0, 1fr) auto;
+    column-gap: 64px;
     min-height: 0;
-    padding: 0 24px 6px;
-    transition: filter var(--dur-2) var(--ease-out), opacity var(--dur-2) linear;
+    padding: 0 var(--gutter) 18px;
+    transition: opacity var(--dur-2) linear;
   }
 
   .stage.dim {
-    filter: blur(2px) brightness(0.62);
+    opacity: 0.3;
+  }
+
+  .span {
+    grid-column: 1 / -1;
+    grid-row: 1 / -1;
   }
 
   .center {
@@ -326,31 +383,13 @@
     height: 100%;
   }
 
-  .message {
-    text-align: center;
-    gap: 8px;
-  }
-
-  .message h2 {
-    margin: 0;
-    font-size: 20px;
-    font-weight: 650;
-  }
-
-  .message p {
-    margin: 0;
-    max-width: 60ch;
-    color: var(--ink-dim);
-    font-size: 13px;
-  }
-
-  .spinner {
-    width: 22px;
-    height: 22px;
+  .loader {
+    width: 18px;
+    height: 18px;
     border-radius: 50%;
-    border: 2px solid rgba(255, 255, 255, 0.16);
-    border-top-color: var(--accent);
-    animation: spin 700ms linear infinite;
+    border: 1px solid var(--line-strong);
+    border-top-color: var(--ink);
+    animation: spin 800ms linear infinite;
   }
 
   @keyframes spin {
@@ -359,107 +398,175 @@
     }
   }
 
-  .hero {
-    position: relative;
-    z-index: 12;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+  .message {
+    justify-items: center;
+    gap: 12px;
     text-align: center;
-    gap: 10px;
-    margin-bottom: 14px;
-    pointer-events: none;
   }
 
-  .eyebrow {
+  .message h2 {
     margin: 0;
-    color: var(--accent);
-    font-size: 11px;
-    font-weight: 750;
-    letter-spacing: 0.22em;
+    font-size: 26px;
+    font-weight: 680;
+    letter-spacing: -0.03em;
+  }
+
+  .detail {
+    margin: 0;
+    max-width: 62ch;
+    color: var(--ink-faint);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.7;
+  }
+
+  /* --- the record --------------------------------------------------------- */
+
+  .hero {
+    grid-column: 1;
+    grid-row: 1;
+    align-self: end;
+    max-width: 820px;
+    padding-bottom: 34px;
+  }
+
+  .kicker {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
     text-transform: uppercase;
-    transition: color var(--dur-3) linear;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .kicker .idx {
+    color: var(--accent);
+  }
+
+  .kicker .sep,
+  .kicker .tot {
+    color: var(--ink-ghost);
+  }
+
+  .kicker .genre {
+    margin-left: 12px;
+    padding-left: 13px;
+    border-left: 1px solid var(--line);
+    color: var(--ink-faint);
   }
 
   h1 {
-    margin: 2px 0 0;
-    font-family: var(--font-display);
-    font-size: clamp(34px, 4.6vw, 62px);
-    font-weight: 690;
-    letter-spacing: -0.035em;
-    line-height: 0.98;
-    text-shadow: 0 18px 50px rgba(0, 0, 0, 0.65);
+    margin: 16px 0 0;
+    font-size: clamp(38px, 5.4vw, 80px);
+    font-weight: 720;
+    letter-spacing: -0.045em;
+    line-height: 0.92;
+    text-wrap: balance;
   }
 
   .sub {
-    margin: 8px 0 0;
+    margin: 12px 0 0;
     color: var(--ink-dim);
-    font-size: 14.5px;
+    font-size: 14px;
     font-weight: 500;
-    letter-spacing: 0.005em;
   }
 
-  .meta {
+  /* Record table: label left, value right, one hairline per row. */
+  .facts {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: end;
+    width: 272px;
+    margin: 0;
+    padding-bottom: 34px;
+  }
+
+  .facts > div {
     display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 8px;
-    margin-top: 4px;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 9px 0;
+    border-top: 1px solid var(--line);
   }
 
-  .chip.demo {
-    border-color: rgba(255, 196, 0, 0.35);
-    color: #ffd479;
+  .facts > div:last-child {
+    border-bottom: 1px solid var(--line);
   }
+
+  dt {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  dd {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 30px;
+  }
+
+  .strip {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  /* --- readouts ----------------------------------------------------------- */
 
   .stats {
     position: fixed;
-    left: 26px;
-    bottom: 66px;
+    left: var(--gutter);
+    top: calc(var(--rail) + 14px);
     z-index: 55;
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 7px 12px;
-    border-radius: 12px;
-    background: rgba(18, 20, 30, 0.7);
-    border: 1px solid var(--stroke-subtle);
-    color: var(--ink-faint);
+    gap: 12px;
+    padding: 8px 12px;
     font-size: 11px;
-    font-variant-numeric: tabular-nums;
   }
 
   .stats b {
     color: var(--ink);
-    font-weight: 650;
+    font-weight: 600;
   }
 
-  .sep {
-    opacity: 0.4;
+  .stats .num {
+    color: var(--ink-faint);
+    font-family: var(--font-mono);
+  }
+
+  .divider {
+    width: 1px;
+    height: 10px;
+    background: var(--line);
   }
 
   .boot {
     position: fixed;
     inset: 0;
     z-index: 90;
-    display: grid;
-    place-items: center;
-    background: #04050a;
+    display: flex;
+    align-items: flex-end;
+    padding: 0 0 28px var(--gutter);
+    background: var(--bg-0);
   }
 
-  .mark {
-    color: rgba(244, 246, 255, 0.9);
-    font-size: 13px;
-    font-weight: 700;
-    letter-spacing: 0.42em;
-    text-indent: 0.42em;
-    animation: pulse 900ms var(--ease-out);
-  }
-
-  @keyframes pulse {
-    from {
-      opacity: 0;
-      letter-spacing: 0.6em;
-    }
+  .boot .label {
+    color: var(--ink-ghost);
   }
 </style>

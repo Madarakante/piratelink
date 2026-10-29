@@ -8,14 +8,12 @@
 <!--
   Background layer.
 
-  Two decisions worth noting for the RAM budget:
-  1. The bitmap is pre-blurred and pre-darkened at asset-build time. Running a live
-     CSS `filter: blur()` over a 1920x1080 layer costs a full-screen GPU pass every
-     frame; baking it costs nothing at runtime.
-  2. Only the current game's backdrop is in the DOM. Keyed on game.id, the outgoing
-     <img> fades out and is then removed, releasing its decoded bitmap.
+  The bitmap is pre-blurred and pre-darkened at asset-build time, so nothing is
+  filtered per frame. It is also *static* now: the old version drifted a
+  1920x620 layer forever, which cost a full-screen composite every frame and read
+  as a screensaver. Only the current game's backdrop exists in the DOM.
 -->
-<div class="backdrop" style="--accent: {game.accent};">
+<div class="backdrop">
   {#if game.backdrop}
     {#each [game] as g (g.id)}
       <img
@@ -24,7 +22,7 @@
         alt=""
         draggable="false"
         decoding="async"
-        transition:fade={{ duration: 620 }}
+        transition:fade={{ duration: 380 }}
       />
     {/each}
   {:else}
@@ -32,9 +30,8 @@
     <div class="flat"></div>
   {/if}
 
+  <div class="tint"></div>
   <div class="wash"></div>
-  <div class="vignette"></div>
-  <div class="grain"></div>
 </div>
 
 <style>
@@ -49,51 +46,52 @@
 
   .layer {
     position: absolute;
-    inset: -4%;
-    width: 108%;
-    height: 108%;
+    inset: -2%;
+    width: 104%;
+    height: 104%;
     object-fit: cover;
-    /* Slow drift keeps a static shot from reading as a screenshot. */
-    animation: drift 46s var(--ease-out) infinite alternate;
-    will-change: transform;
-  }
-
-  @keyframes drift {
-    from {
-      transform: scale(1.02) translate3d(-0.6%, -0.4%, 0);
-    }
-    to {
-      transform: scale(1.1) translate3d(0.8%, 0.6%, 0);
-    }
   }
 
   .flat {
     position: absolute;
     inset: 0;
     background:
-      radial-gradient(90% 70% at 50% 18%, var(--accent-soft, rgba(127, 176, 255, 0.22)), transparent 70%),
-      linear-gradient(180deg, #0a0d18 0%, #04050a 100%);
+      radial-gradient(80% 70% at 76% 26%, var(--accent-soft), transparent 62%),
+      linear-gradient(180deg, #0a0c11 0%, var(--bg-0) 100%);
   }
 
+  /* The per-game accent is used once, as a wide tint — not as a glow behind the
+     selected card. */
+  .tint {
+    position: absolute;
+    inset: 0;
+    opacity: 0.6;
+    background: radial-gradient(55% 50% at 74% 28%, var(--accent-soft), transparent 68%);
+  }
+
+  /* Two flat gradients instead of a vignette + bloom + grain stack. The left
+     third is where type lives, so it stays near-solid; the right is left open
+     for the art. */
   .wash {
     position: absolute;
     inset: 0;
     background:
-      linear-gradient(180deg, rgba(4, 5, 10, 0.82) 0%, rgba(4, 5, 10, 0.24) 28%, rgba(4, 5, 10, 0.55) 62%, rgba(4, 5, 10, 0.96) 100%),
-      radial-gradient(120% 90% at 50% 18%, transparent 30%, rgba(4, 5, 10, 0.5) 100%);
-  }
-
-  .vignette {
-    position: absolute;
-    inset: 0;
-    background: radial-gradient(130% 100% at 50% 50%, transparent 46%, rgba(0, 0, 0, 0.72) 100%);
-  }
-
-  /* Subtle texture — hand-crafted grain that reads as material, not algorithm. */
-  .grain {
-    position: absolute;
-    inset: 0;
-    opacity: 0.08;
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg'><rect width='100%' height='100%' fill='%23000'/><circle cx='50%' cy='50%' r='42' fill='%230f0'/></svg>");
+      linear-gradient(
+        180deg,
+        rgba(7, 8, 10, 0.92) 0%,
+        rgba(7, 8, 10, 0.2) 18%,
+        rgba(7, 8, 10, 0) 45%,
+        rgba(7, 8, 10, 0.34) 66%,
+        rgba(7, 8, 10, 0.92) 88%,
+        var(--bg-0) 100%
+      ),
+      linear-gradient(
+        90deg,
+        rgba(7, 8, 10, 0.97) 0%,
+        rgba(7, 8, 10, 0.9) 22%,
+        rgba(7, 8, 10, 0.58) 46%,
+        rgba(7, 8, 10, 0.32) 72%,
+        rgba(7, 8, 10, 0.52) 100%
+      );
   }
 </style>

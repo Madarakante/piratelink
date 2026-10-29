@@ -1,18 +1,32 @@
 <script lang="ts">
-  let { gamepad = false }: { gamepad?: boolean } = $props();
+  let {
+    gamepad = false,
+    index = 0,
+    total = 0,
+  }: { gamepad?: boolean; index?: number; total?: number } = $props();
+
+  const pad2 = (n: number) => String(n).padStart(2, "0");
 </script>
 
+<!-- Keys are plain text, not keycap boxes: the hint bar is a caption, not a toy. -->
 <footer class="hints">
-  <span class="hint"><span class="kbd">◀</span><span class="kbd">▶</span> browse</span>
-  <span class="hint"><span class="kbd">Enter</span> open</span>
-  <span class="hint"><span class="kbd">Esc</span> back</span>
-  <span class="hint"><span class="kbd">M</span> mute</span>
-  <span class="hint"><span class="kbd">N</span> test chime</span>
-  <span class="hint"><span class="kbd">F3</span> stats</span>
+  {#if total > 0}
+    <span><b>← →</b>Browse</span>
+    <span><b>↵</b>Play</span>
+    <span><b>Esc</b>Info</span>
+    <span><b>M</b>Mute</span>
+    <span><b>N</b>Chime</span>
+    <span><b>F3</b>Stats</span>
+  {/if}
+  <span class="spacer"></span>
+
+  {#if total > 0}
+    <span class="pos num">{pad2(index + 1)}<i>/</i>{pad2(total)}</span>
+  {/if}
 
   <span class="pad" class:on={gamepad}>
     <i></i>
-    {gamepad ? "Controller connected" : "Controller ready"}
+    {gamepad ? "Pad" : "No pad"}
   </span>
 </footer>
 
@@ -22,45 +36,67 @@
     z-index: 20;
     display: flex;
     align-items: center;
-    gap: 20px;
-    height: 58px;
-    padding: 0 26px;
-    color: var(--ink-faint);
-    font-size: 11.5px;
+    gap: 22px;
+    padding: 0 18px 0 var(--gutter);
+    border-top: 1px solid var(--line);
+    color: var(--ink-ghost);
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
   }
 
-  .hint {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-  }
-
-  .pad {
+  .hints > span {
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    margin-left: auto;
-    font-size: 11px;
-    letter-spacing: 0.02em;
+  }
+
+  b {
+    color: var(--ink-dim);
+    font-weight: 500;
+  }
+
+  .spacer {
+    flex: 1;
+  }
+
+  .pos {
+    color: var(--ink-faint);
+    font-size: 10px;
+  }
+
+  .pos i {
+    margin: 0 4px;
+    color: var(--ink-ghost);
+    font-style: normal;
+  }
+
+  .pad {
+    gap: 8px;
+    color: var(--ink-ghost);
   }
 
   .pad i {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.22);
+    width: 5px;
+    height: 5px;
+    background: var(--ink-ghost);
+  }
+
+  .pad.on {
+    color: var(--ink-dim);
   }
 
   .pad.on i {
-    background: #4ade80;
-    box-shadow: 0 0 9px #4ade80;
+    background: var(--accent);
   }
 
-  @media (max-width: 900px) {
+  @media (max-width: 1040px) {
     .hints {
-      gap: 12px;
+      gap: 14px;
     }
-    .hint:nth-child(n + 4) {
+    .hints > span:nth-child(n + 5) {
       display: none;
     }
   }

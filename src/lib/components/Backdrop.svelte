@@ -3,7 +3,14 @@
   import { fade } from "svelte/transition";
   import type { Game } from "../games";
 
-  let { game }: { game: Game } = $props();
+  let {
+    game,
+    fit = "fit",
+  }: {
+    game: Game;
+    /** `fit` keeps the whole hero; `fill` lets it cover the window and crop. */
+    fit?: "fit" | "fill";
+  } = $props();
 
   type Layer = { key: string; src: string };
 
@@ -56,7 +63,7 @@
   1920x620 layer forever, which cost a full-screen composite every frame and read
   as a screensaver.
 -->
-<div class="backdrop">
+<div class="backdrop" data-fit={fit}>
   {#if base}
     <img class="layer" src={base.src} alt="" draggable="false" decoding="async" />
   {/if}
@@ -94,10 +101,25 @@
 
   .layer {
     position: absolute;
-    inset: 0;
+    top: 0;
+    left: 0;
     width: 100%;
     height: 100%;
     object-fit: cover;
+  }
+
+  /*
+    Fit mode: the hero is printed at its own aspect ratio, the width of the window,
+    so nothing is cropped. Valve's heroes are ~3.1:1 while a 16:9 window is ~1.6:1,
+    so covering the window would throw away half the picture — the mask ends it
+    softly instead of leaving a hard seam where the bitmap stops.
+  */
+  .backdrop[data-fit="fit"] .layer {
+    height: auto;
+    object-fit: contain;
+    object-position: 50% 0;
+    -webkit-mask-image: linear-gradient(to bottom, #000 58%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 58%, transparent 100%);
   }
 
   .flat {

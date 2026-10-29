@@ -16,7 +16,8 @@ export type Action =
   | "mute"
   | "notify" // demo: simulate a friend coming online
   | "stats" // renderer heap readout
-  | "add"; // open the Add games sheet
+  | "add" // open the Add games sheet
+  | "settings"; // open the settings page
 
 export type Device = "keyboard" | "gamepad";
 export type PadFamily = "playstation" | "xbox";
@@ -63,6 +64,7 @@ const KEY_MAP: Record<string, Action> = {
   KeyM: "mute",
   KeyN: "notify",
   F3: "stats",
+  KeyS: "settings",
 };
 
 /** Standard-mapping button indices (DualSense/DualShock/Xbox all land here). */
@@ -75,6 +77,7 @@ const PAD_BUTTON_MAP: Partial<Record<number, Action>> = {
   5: "next", // R1
   8: "mute", // Share / View
   9: "stats", // Options / Menu
+  10: "settings", // L3
   11: "add", // R3 — the only system button left free
   12: "prev", // D-pad up
   13: "next", // D-pad down

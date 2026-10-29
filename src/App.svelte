@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { fade } from "svelte/transition";
   import { credits, type Game } from "./lib/games";
-  import { fetchArtwork, launchGame, loadLibrary, removeGame, type LibrarySource } from "./lib/library";
+  import { fetchArtwork, getSettings, launchGame, loadLibrary, removeGame, saveSettings, type LibrarySource, type Settings } from "./lib/library";
   import { audio } from "./lib/audio";
   import { bindInput, connectedPad, type Action, type Device, type PadFamily } from "./lib/input";
   import Backdrop from "./lib/components/Backdrop.svelte";
@@ -14,6 +14,7 @@
   import EmptyState from "./lib/components/EmptyState.svelte";
   import ImportSheet from "./lib/components/ImportSheet.svelte";
   import ArtSheet from "./lib/components/ArtSheet.svelte";
+  import SettingsSheet from "./lib/components/SettingsSheet.svelte";
   let index = $state(0);
   let overlay = $state(false);
   let muted = $state(false);
@@ -32,9 +33,16 @@
   let loadError = $state("");
   let importOpen = $state(false);
   let artOpen = $state(false);
+  let settingsOpen = $state(false);
+  let settings = $state<Settings | null>(null);
 
   const current = $derived(games[index] ?? null);
   const accent = $derived(current?.accent ?? "#eef0f4");
+
+  /** The settings page can force a glyph family; `auto` follows the connected pad. */
+  const glyphFamily = $derived<PadFamily>(
+    settings && settings.glyphs !== "auto" ? settings.glyphs : family,
+  );
 
   /** #rrggbb -> rgba() so the accent can also drive a translucent wash. */
   function accentSoft(hex: string, alpha: number): string {
@@ -70,6 +78,44 @@
     } finally {
       loading = false;
     }
+  }
+
+  async function loadSettings() {
+    try {
+      const res = await getSettings();
+      settings = res;
+      muted = !res.sound;
+      audio.setMuted(muted);
+    } catch (err) {
+      // Settings are optional: a broken config.json must not stop the shelf.
+      console.warn("[settings]", err);
+    }
+  }
+
+  /** Mute is a settings value, not a session flag, so it survives a restart. */
+  function toggleMute() {
+    muted = audio.toggleMuted();
+    void saveSettings({ sound: !muted })
+      .then((next) => (settings = next))
+      .catch(() => {});
+  }
+
+  /** Re-runs the automatic match for every title, reporting progress as it goes. */
+  async function refreshAllArt(progress: (done: number, total: number) => void) {
+    const targets = games.filter((game) => game.dbId != null);
+    let done = 0;
+    progress(done, targets.length);
+    for (const game of targets) {
+      try {
+        await fetchArtwork(game.dbId as number);
+      } catch {
+        // One title failing must not stop the rest; the count still advances.
+      }
+      done += 1;
+      progress(done, targets.length);
+    }
+    await reload();
+    pushToast("Artwork refreshed", `${done} ${done === 1 ? "title" : "titles"}`);
   }
 
   function move(delta: number) {
@@ -148,17 +194,24 @@
   function handle(action: Action) {
     void audio.unlock();
 
+    // Settings sits above everything else, so it gets first refusal on input.
+    if (settingsOpen) {
+      if (action === "back" || action === "settings") settingsOpen = false;
+      if (action === "mute") toggleMute();
+      return;
+    }
+
     // The import sheet owns input while it is up.
     if (importOpen) {
       if (action === "back") importOpen = false;
-      if (action === "mute") muted = audio.toggleMuted();
+      if (action === "mute") toggleMute();
       return;
     }
 
     // ...and so does the artwork picker, which sits above the details page.
     if (artOpen) {
       if (action === "back") artOpen = false;
-      if (action === "mute") muted = audio.toggleMuted();
+      if (action === "mute") toggleMute();
       return;
     }
 
@@ -180,7 +233,7 @@
         closeDetails();
         break;
       case "mute":
-        muted = audio.toggleMuted();
+        toggleMute();
         break;
       case "notify":
         demoFriend();
@@ -191,6 +244,9 @@
       case "add":
         if (!overlay) importOpen = true;
         break;
+      case "settings":
+        settingsOpen = true;
+        break;
     }
   }
 
@@ -198,6 +254,7 @@
     const stop = bindInput(handle, (next) => (device = next));
     void audio.load();
     void reload();
+    void loadSettings();
 
     const unlock = () => void audio.unlock();
     window.addEventListener("pointerdown", unlock, { once: true });
@@ -241,15 +298,16 @@
   style="--accent: {accent}; --accent-soft: {accentSoft(accent, 0.18)};"
 >
   {#if current}
-    <Backdrop game={current} />
+    <Backdrop game={current} fit={settings?.hero_fit ?? "fit"} />
   {/if}
 
   <TopBar
     {muted}
     count={games.length}
     preview={source === "demo"}
-    onToggleMute={() => (muted = audio.toggleMuted())}
+    onToggleMute={toggleMute}
     onAdd={() => (importOpen = true)}
+    onSettings={() => (settingsOpen = true)}
   />
 
   <main class="stage" class:dim={overlay}>
@@ -327,7 +385,7 @@
     {/if}
   </main>
 
-  <HintBar gamepad={pad} {device} {family} {index} total={games.length} />
+  <HintBar gamepad={pad} {device} family={glyphFamily} {index} total={games.length} />
 
   {#if current}
     <DetailOverlay
@@ -339,7 +397,7 @@
       onChangeArt={() => (artOpen = true)}
       onRemove={() => removeEntry(current)}
       {device}
-      {family}
+      family={glyphFamily}
     />
 
     <ArtSheet
@@ -356,6 +414,20 @@
       }}
     />
   {/if}
+
+  <SettingsSheet
+    open={settingsOpen}
+    {settings}
+    onClose={() => (settingsOpen = false)}
+    onSaved={(next) => {
+      settings = next;
+      if (muted !== !next.sound) {
+        muted = !next.sound;
+        audio.setMuted(muted);
+      }
+    }}
+    onRefreshAll={refreshAllArt}
+  />
 
   <ImportSheet
     open={importOpen}

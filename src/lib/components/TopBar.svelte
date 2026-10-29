@@ -7,12 +7,14 @@
     preview = false,
     onToggleMute,
     onAdd,
+    onSettings,
   }: {
     muted?: boolean;
     count?: number;
     preview?: boolean;
     onToggleMute?: () => void;
     onAdd?: () => void;
+    onSettings?: () => void;
   } = $props();
 
   let clock = $state("");
@@ -72,6 +74,20 @@
       Add games
     </button>
   {/if}
+
+  <button
+    class="icon-btn"
+    aria-label="Settings"
+    title="Settings (S)"
+    onclick={onSettings}
+  >
+    <!-- Sliders, not a gear: same hairline vocabulary as the rest of the rail. -->
+    <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+      <path d="M1.5 4.5h13M1.5 11.5h13" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+      <rect x="9.6" y="2.4" width="2.4" height="4.2" fill="currentColor" />
+      <rect x="4" y="9.4" width="2.4" height="4.2" fill="currentColor" />
+    </svg>
+  </button>
 
   <button
     class="icon-btn"

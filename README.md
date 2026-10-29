@@ -22,7 +22,7 @@ match refuses can be picked by hand. The memory target is not hit yet.
 | Library | SQLite under the app data dir; add a game by picking its `.exe` or a Switch dump (`.nsp`, `.xci`, `.nro`), correct the suggested title, remove entries |
 | Artwork | SteamGridDB cover at 600 px and hero at up to 3840 px (the 4K copy is preferred over the 1920×620 one), stored without resampling and losslessly as WebP, served from the cache. **Change art** opens a picker: search SteamGridDB by hand, then click the cover or hero to apply it |
 | Switch | A ROM is recognised by extension, launched as `Ryujinx.exe "<rom>"`, and gets the same shelf, art and import flow as a PC game |
-| Input | Keyboard (`←` `→` `Enter` `Space` `Esc` `M` `N` `F3`) **and** gamepad (Xbox / DualSense / DualShock, standard mapping, D-pad or left stick, hold-to-repeat). The hint bar labels itself for whichever device was used last, so a pad shows `× ○ □ △` or `A B X Y`; R3 opens Add games, though the `.exe` picker itself is the Windows dialog and still needs a mouse |
+| Input | Keyboard (`←` `→` `Enter` `Space` `Esc` `M` `N` `S` `F3`) **and** gamepad (Xbox / DualSense / DualShock, standard mapping, D-pad or left stick, hold-to-repeat). The hint bar labels itself for whichever device was used last, so a pad shows `× ○ □ △` or `A B X Y`; R3 opens Add games and L3 opens Settings, though the `.exe` picker itself is the Windows dialog and still needs a mouse |
 | Motion | Custom critically-damped spring in `src/lib/spring.svelte.ts`; parks its `requestAnimationFrame` loop the moment it settles |
 | Audio | One 27 KB OGG sprite, five cues, sliced at playback |
 | Window | Frameless, custom titlebar, drag region, native min/max/close |
@@ -55,6 +55,44 @@ A `.nsp`, `.xci` or `.nro` is treated as a console title, not as an executable:
 
 `ryujinx_path` is optional; forks (Ryubing and friends) work the same way — point it
 at whichever `Ryujinx.exe` you actually run.
+
+## Settings
+
+`S`, `L3`, or the sliders button in the top right opens one page. There is no
+global *Save*: every control writes `config.json` the moment it changes, so the
+file and the screen cannot disagree.
+
+![Settings](docs/settings.png)
+
+| Section | Entry | What it does |
+| --- | --- | --- |
+| Artwork | SteamGridDB key | Save, clear, or keep the existing key (shown as `saved · ending 9f2c`). Takes effect without a restart |
+| | Hero art | **Whole image** shows the full 3:1 hero above the shelf; **Fill window** crops it to the window |
+| | Cached artwork | File count and size, plus *Refresh all*, which re-runs the automatic match for every title so older 1080p heroes become 4K |
+| Switch | Emulator | *Choose…* picks any `Ryujinx.exe`; *Auto* clears the path and goes back to detection. The line under it says what was actually found |
+| Play | UI sounds | On/off, the same value `M` toggles |
+| | Controller glyphs | Auto follows the connected pad; Xbox/PlayStation force the hint bar |
+| Storage | Library, artwork, log, config | Prints the real paths and opens them in Explorer (`/select,` for files) |
+| About | — | Version, credits, key list |
+
+The hero setting exists because the two shapes cannot both be satisfied. SteamGridDB
+heroes are ~3.1:1 (3840×1240) and a 16:9 window is ~1.6:1, so `cover` shows **51 %** of
+the picture at 1460×921 — measured, not estimated. *Whole image* prints the bitmap at
+its own aspect and masks its lower edge into the page instead of leaving a seam.
+
+```jsonc
+// %APPDATA%\app.piratelink.launcher\config.json
+{
+  "steamgriddb_api_key": "<key>",
+  "ryujinx_path": "",
+  "hero_fit": "fit",          // "fit" | "fill"
+  "glyphs": "auto",           // "auto" | "xbox" | "playstation"
+  "sound": true
+}
+```
+
+Unknown values fall back to the defaults rather than being written back, and a key
+supplied by `PIRATELINK_SGDB_KEY` is never persisted by opening this page.
 
 ## What is deliberately *not* in the box
 
@@ -161,7 +199,7 @@ Run and passing:
 ```
 npm run check      -> 0 errors, 0 warnings
 npm run build      -> 301 KB dist
-cargo test --release --lib -> 53 passed, 2 ignored (live)
+cargo test --release --lib -> 58 passed, 2 ignored (live)
 npx tauri build --no-bundle -> target/release/piratelink.exe
 ```
 
@@ -283,11 +321,11 @@ Set the API key once (outside the repo, never committed):
 { "steamgriddb_api_key": "<your key>", "ryujinx_path": "<optional>\\Ryujinx.exe" }
 ```
 
-Tests: **53 unit + 2 live**. The live tests are ignored by default so the suite
+Tests: **58 unit + 2 live**. The live tests are ignored by default so the suite
 stays offline:
 
 ```powershell
-cargo test                                     # 53 passed
+cargo test                                     # 58 passed
 $env:PIRATELINK_SGDB_KEY = "..."
 cargo test --lib -- --ignored                  # 2 passed (real API, ~5 s)
 ```

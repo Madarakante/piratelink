@@ -387,3 +387,104 @@ export async function launchGame(dbId: number): Promise<void> {
   if (!isTauri) return;
   await invoke("launch_game", { id: dbId });
 }
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+export type HeroFit = "fit" | "fill";
+export type GlyphChoice = "auto" | "xbox" | "playstation";
+
+export type Settings = {
+  api_key_set: boolean;
+  /** Last four characters, so a stored key is recognisable without being exposed. */
+  api_key_tail: string;
+  /** What config.json says; empty means the emulator is auto-detected. */
+  ryujinx_path: string;
+  /** What auto-detection found, from any source. */
+  ryujinx_found: string | null;
+  hero_fit: HeroFit;
+  glyphs: GlyphChoice;
+  sound: boolean;
+  data_dir: string;
+  art_dir: string;
+  database: string;
+  log_path: string;
+  config_path: string;
+  games: number;
+  art_files: number;
+  art_bytes: number;
+  version: string;
+};
+
+export type SettingsPatch = {
+  steamgriddb_api_key?: string;
+  ryujinx_path?: string;
+  hero_fit?: HeroFit;
+  glyphs?: GlyphChoice;
+  sound?: boolean;
+};
+
+const PREVIEW_SETTINGS: Settings = {
+  api_key_set: true,
+  api_key_tail: "9f2c",
+  ryujinx_path: "",
+  ryujinx_found: "D:\\ryujinx-stable-1.3.3-windows_x64\\Ryujinx.exe",
+  hero_fit: "fit",
+  glyphs: "auto",
+  sound: true,
+  data_dir: "C:\\Users\\GAME\\AppData\\Roaming\\app.piratelink.launcher",
+  art_dir: "C:\\Users\\GAME\\AppData\\Roaming\\app.piratelink.launcher\\cache\\art",
+  database: "C:\\Users\\GAME\\AppData\\Roaming\\app.piratelink.launcher\\library.db",
+  log_path: "C:\\Users\\GAME\\AppData\\Roaming\\app.piratelink.launcher\\piratelink.log",
+  config_path: "C:\\Users\\GAME\\AppData\\Roaming\\app.piratelink.launcher\\config.json",
+  games: 8,
+  art_files: 16,
+  art_bytes: 46_302_000,
+  version: "0.1.0",
+};
+
+let previewSettings: Settings = PREVIEW_SETTINGS;
+
+export async function getSettings(): Promise<Settings> {
+  if (!isTauri) return previewSettings;
+  return invoke<Settings>("get_settings");
+}
+
+export async function saveSettings(patch: SettingsPatch): Promise<Settings> {
+  if (!isTauri) {
+    previewSettings = { ...previewSettings, ...patch };
+    if (patch.steamgriddb_api_key !== undefined) {
+      const key = patch.steamgriddb_api_key.trim();
+      previewSettings.api_key_set = key.length > 0;
+      previewSettings.api_key_tail = key.slice(-4);
+    }
+    if (patch.ryujinx_path !== undefined) {
+      previewSettings.ryujinx_found =
+        patch.ryujinx_path.trim() || PREVIEW_SETTINGS.ryujinx_found;
+    }
+    return previewSettings;
+  }
+  return invoke<Settings>("save_settings", { patch });
+}
+
+export async function revealData(
+  kind: "data" | "art" | "log" | "config",
+): Promise<void> {
+  if (!isTauri) return;
+  await invoke("reveal_data", { kind });
+}
+
+/** File dialog for the emulator. Returns null when the dialog was cancelled. */
+export async function pickEmulator(): Promise<string | null> {
+  if (!isTauri) return PREVIEW_SETTINGS.ryujinx_found;
+
+  const dialog = await import("@tauri-apps/plugin-dialog");
+  const picked = await dialog.open({
+    multiple: false,
+    title: "Choose the Switch emulator executable",
+    filters: [{ name: "Ryujinx", extensions: ["exe"] }],
+  });
+
+  return typeof picked === "string" ? picked : null;
+}

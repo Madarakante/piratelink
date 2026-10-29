@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
 use config::Config;
@@ -44,8 +44,16 @@ fn log_line(message: &str) {
 
 struct AppState {
     db: Db,
-    config: Config,
+    /// Behind a lock so the settings page can change the emulator path at
+    /// runtime; every reader takes a short lock and clones what it needs.
+    config: std::sync::RwLock<Config>,
     sgdb: Sgdb,
+}
+
+impl AppState {
+    fn config(&self) -> std::sync::RwLockReadGuard<'_, Config> {
+        self.config.read().unwrap_or_else(|err| err.into_inner())
+    }
 }
 
 fn to_string_err<E: std::fmt::Display>(err: E) -> String {
@@ -320,7 +328,7 @@ async fn fetch_artwork(id: i64, state: tauri::State<'_, AppState>) -> Result<Art
         )
     })?;
 
-    let art_dir = state.config.art_dir();
+    let art_dir = state.config().art_dir();
     std::fs::create_dir_all(&art_dir).map_err(to_string_err)?;
 
     let mut artwork = Artwork {
@@ -491,7 +499,7 @@ async fn apply_artwork(
         return Err("SteamGridDB API key not configured".to_string());
     }
 
-    let art_dir = state.config.art_dir();
+    let art_dir = state.config().art_dir();
     std::fs::create_dir_all(&art_dir).map_err(to_string_err)?;
 
     let mut artwork = Artwork {
@@ -572,7 +580,10 @@ fn launch_game(id: i64, state: tauri::State<'_, AppState>) -> Result<(), String>
     }
 
     if game.platform == "switch" {
-        return launch_rom(&game, &file, state.config.ryujinx.as_deref());
+        // Clone the configured path so the lock is not held while the emulator
+        // starts (and so a poisoned lock cannot take the launch down).
+        let configured = state.config().ryujinx.clone();
+        return launch_rom(&game, &file, configured.as_deref());
     }
 
     let dir = file
@@ -623,10 +634,204 @@ struct EmulatorStatus {
 
 #[tauri::command]
 fn emulator_status(state: tauri::State<'_, AppState>) -> EmulatorStatus {
-    let found = emulator::find(state.config.ryujinx.as_deref(), None);
+    let configured = state.config().ryujinx.clone();
+    let found = emulator::find(configured.as_deref(), None);
     EmulatorStatus {
         path: found.map(|path| path.to_string_lossy().to_string()),
     }
+}
+
+// -- settings ---------------------------------------------------------------
+
+/// What the settings page shows.
+///
+/// Paths are absolute so the sheet can print them verbatim. The API key is never
+/// returned: only whether one exists and its last four characters, which is
+/// enough to recognise the key without moving it into the webview.
+#[derive(Serialize)]
+struct SettingsView {
+    api_key_set: bool,
+    api_key_tail: String,
+    /// The path written in config.json, empty when the emulator is auto-detected.
+    ryujinx_path: String,
+    /// What auto-detection actually found, whatever the source.
+    ryujinx_found: Option<String>,
+    hero_fit: String,
+    glyphs: String,
+    sound: bool,
+    data_dir: String,
+    art_dir: String,
+    database: String,
+    log_path: String,
+    config_path: String,
+    games: usize,
+    art_files: usize,
+    art_bytes: u64,
+    version: String,
+}
+
+#[derive(Deserialize)]
+struct SettingsPatch {
+    /// Absent means "leave it alone"; an empty string clears the key.
+    steamgriddb_api_key: Option<String>,
+    /// Empty string means "find the emulator yourself".
+    ryujinx_path: Option<String>,
+    hero_fit: Option<String>,
+    glyphs: Option<String>,
+    sound: Option<bool>,
+}
+
+fn count_art(dir: &Path) -> (usize, u64) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return (0, 0);
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| entry.metadata().ok())
+        .filter(|meta| meta.is_file())
+        .fold((0, 0), |(files, bytes), meta| (files + 1, bytes + meta.len()))
+}
+
+fn settings_view(state: &AppState) -> SettingsView {
+    let config = state.config();
+    let art_dir = config.art_dir();
+    let (art_files, art_bytes) = count_art(&art_dir);
+    let games = state.db.games().map(|games| games.len()).unwrap_or(0);
+    let configured = config.ryujinx.clone();
+    let found = emulator::find(configured.as_deref(), None);
+
+    let key = config.api_key.trim();
+    SettingsView {
+        api_key_set: !key.is_empty(),
+        // Last four characters only: enough to recognise the key, never enough to
+        // use it. Taken by chars so a pasted non-ASCII character cannot panic, and
+        // only for keys long enough that four characters are not most of the key.
+        api_key_tail: if key.chars().count() >= 8 {
+            key.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect()
+        } else {
+            String::new()
+        },
+        ryujinx_path: configured
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        ryujinx_found: found.map(|path| path.to_string_lossy().to_string()),
+        hero_fit: config.hero_fit.clone(),
+        glyphs: config.glyphs.clone(),
+        sound: config.sound,
+        data_dir: config.data_dir.to_string_lossy().to_string(),
+        art_dir: art_dir.to_string_lossy().to_string(),
+        database: db::db_path(&config.data_dir).to_string_lossy().to_string(),
+        log_path: config.log_path().to_string_lossy().to_string(),
+        config_path: config.config_path().to_string_lossy().to_string(),
+        games,
+        art_files,
+        art_bytes,
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    }
+}
+
+#[tauri::command]
+fn get_settings(state: tauri::State<'_, AppState>) -> SettingsView {
+    settings_view(&state)
+}
+
+/// Applies the patch, writes config.json, and returns the result.
+///
+/// Values are applied in memory even if the write fails, so the app behaves the
+/// way the controls say; the error is still returned so the sheet can say the
+/// file was not updated.
+#[tauri::command]
+fn save_settings(
+    patch: SettingsPatch,
+    state: tauri::State<'_, AppState>,
+) -> Result<SettingsView, String> {
+    {
+        let mut config = state
+            .config
+            .write()
+            .unwrap_or_else(|err| err.into_inner());
+
+        if let Some(key) = patch.steamgriddb_api_key.as_deref() {
+            config.set_api_key(key);
+            state.sgdb.set_key(&config.api_key);
+        }
+        if let Some(path) = patch.ryujinx_path.as_deref() {
+            config.set_ryujinx(path);
+        }
+        if let Some(value) = patch.hero_fit.as_deref() {
+            config.set_hero_fit(value);
+        }
+        if let Some(value) = patch.glyphs.as_deref() {
+            config.set_glyphs(value);
+        }
+        if let Some(on) = patch.sound {
+            config.set_sound(on);
+        }
+
+        log_line(&format!(
+            "save_settings: hero_fit={} glyphs={} sound={} key={} emulator={}",
+            config.hero_fit,
+            config.glyphs,
+            config.sound,
+            if config.api_key.is_empty() {
+                "cleared"
+            } else {
+                "set"
+            },
+            config
+                .ryujinx
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "auto".to_string())
+        ));
+
+        config
+            .save()
+            .map_err(|err| format!("could not write config.json: {err}"))?;
+    }
+
+    Ok(settings_view(&state))
+}
+
+/// Opens one of the app's own locations in Explorer. The path is chosen here, not
+/// passed from the webview, so this cannot be used to open arbitrary folders.
+#[tauri::command]
+fn reveal_data(kind: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let (path, is_file) = {
+        let config = state.config();
+        match kind.as_str() {
+            "data" => (config.data_dir.clone(), false),
+            "art" => (config.art_dir(), false),
+            "log" => (config.log_path(), true),
+            "config" => (config.config_path(), true),
+            other => return Err(format!("unknown location {other:?}")),
+        }
+    };
+
+    if !is_file {
+        std::fs::create_dir_all(&path).map_err(to_string_err)?;
+    }
+
+    // A file that no longer exists would make Explorer fall back to Documents, so
+    // reveal its folder instead.
+    let target = if is_file && !path.is_file() {
+        path.parent().map(Path::to_path_buf).unwrap_or(path)
+    } else {
+        path
+    };
+
+    let mut command = Command::new("explorer");
+    if is_file && target.is_file() {
+        // `/select,` highlights the file instead of opening it.
+        command.arg(format!("/select,{}", target.display()));
+    } else {
+        command.arg(&target);
+    }
+
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|err| format!("could not open Explorer: {err}"))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -660,7 +865,11 @@ pub fn run() {
 
             let sgdb = Sgdb::new(config.api_key.clone());
 
-            app.manage(AppState { db, config, sgdb });
+            app.manage(AppState {
+                db,
+                config: std::sync::RwLock::new(config),
+                sgdb,
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -679,6 +888,9 @@ pub fn run() {
             apply_artwork,
             launch_game,
             emulator_status,
+            get_settings,
+            save_settings,
+            reveal_data,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PirateLink");

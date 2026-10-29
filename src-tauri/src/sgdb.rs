@@ -115,7 +115,9 @@ struct Envelope<T> {
 
 pub struct Sgdb {
     http: reqwest::Client,
-    key: String,
+    /// Behind a lock because the settings page can replace it while requests from
+    /// the picker may still be in flight.
+    key: std::sync::RwLock<String>,
     base: String,
     min_interval: Duration,
 }
@@ -129,7 +131,7 @@ impl Sgdb {
                 .timeout(Duration::from_secs(20))
                 .build()
                 .unwrap_or_default(),
-            key,
+            key: std::sync::RwLock::new(key),
             base: BASE_URL.to_string(),
             // No published limit; 8 req/s is polite and still fast enough to
             // hydrate a few dozen covers.
@@ -144,7 +146,19 @@ impl Sgdb {
     }
 
     pub fn has_key(&self) -> bool {
-        !self.key.trim().is_empty()
+        !self.key.read().map(|key| key.trim().is_empty()).unwrap_or(true)
+    }
+
+    /// Replaces the bearer token, so a key typed into settings takes effect
+    /// without a restart.
+    pub fn set_key(&self, key: &str) {
+        if let Ok(mut slot) = self.key.write() {
+            *slot = key.trim().to_string();
+        }
+    }
+
+    fn key(&self) -> String {
+        self.key.read().map(|key| key.clone()).unwrap_or_default()
     }
 
     /// Prefix search by name. Terms are percent-encoded path segments.
@@ -189,7 +203,12 @@ impl Sgdb {
     }
 
     async fn get_json<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<Envelope<T>> {
-        let res = self.send(|| self.http.get(url).header("Authorization", format!("Bearer {}", self.key))).await?;
+        let res = self.send(|| {
+            self.http
+                .get(url)
+                .header("Authorization", format!("Bearer {}", self.key()))
+        })
+        .await?;
         let status = res.status();
         let text = res.text().await?;
 

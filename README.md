@@ -47,6 +47,20 @@ npx tauri build --no-bundle
 
 The executable is written to `src-tauri/target/release/piratelink.exe`.
 
+Create the unsigned NSIS installer locally:
+
+```powershell
+npm run tauri:build
+```
+
+The installer is written to `src-tauri/target/release/bundle/nsis/`.
+GitHub Actions also builds the installer and portable executable when manually
+run or when a version tag such as `v0.1.0` is pushed. Artifacts are available
+from the workflow run under **Actions**.
+
+These builds are intentionally unsigned for now, so Windows SmartScreen may
+show a warning.
+
 ## Multiplayer MVP
 
 1. Install ZeroTier on each computer.

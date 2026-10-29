@@ -6,7 +6,8 @@ mod scanner;
 mod sgdb;
 
 use std::collections::HashSet;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::net::TcpListener;
@@ -58,6 +59,20 @@ struct RoomRuntime {
     token: String,
     port: u16,
     stop: Arc<AtomicBool>,
+    players: Arc<Mutex<Vec<RoomPlayer>>>,
+}
+
+#[derive(Clone, Serialize)]
+struct RoomPlayer {
+    nickname: String,
+    address: String,
+    last_seen: u64,
+}
+
+#[derive(Serialize)]
+struct PingResult {
+    reachable: bool,
+    message: String,
 }
 
 #[derive(Serialize)]
@@ -193,6 +208,87 @@ fn join_zerotier(network_id: String) -> Result<String, String> {
     Ok(if stdout.is_empty() { "ZeroTier join requested".to_string() } else { stdout })
 }
 
+fn now_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .unwrap_or_default()
+}
+
+fn prune_players(players: &mut Vec<RoomPlayer>) {
+    let cutoff = now_seconds().saturating_sub(30);
+    players.retain(|player| player.last_seen >= cutoff);
+}
+
+#[tauri::command]
+fn ping_host(host: String, port: u16) -> Result<PingResult, String> {
+    let address = format!("{}:{}", host.trim(), port);
+    match TcpStream::connect_timeout(
+        &address.parse().map_err(|error| format!("invalid host address: {error}"))?,
+        std::time::Duration::from_secs(3),
+    ) {
+        Ok(mut stream) => {
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                .map_err(to_string_err)?;
+            stream.write_all(b"PING\n").map_err(to_string_err)?;
+            let mut response = [0_u8; 16];
+            let read = stream.read(&mut response).map_err(to_string_err)?;
+            let reachable = &response[..read] == b"PONG\n";
+            Ok(PingResult {
+                reachable,
+                message: if reachable {
+                    format!("Host reachable at {address}")
+                } else {
+                    "Host answered unexpectedly".to_string()
+                },
+            })
+        }
+        Err(error) => Ok(PingResult {
+            reachable: false,
+            message: format!("Host unreachable at {address}: {error}"),
+        }),
+    }
+}
+
+#[tauri::command]
+fn announce_room_player(host: String, port: u16, nickname: String) -> Result<String, String> {
+    let nickname = nickname.trim();
+    if nickname.is_empty() || nickname.len() > 32 {
+        return Err("nickname must contain 1 to 32 characters".to_string());
+    }
+    let address = format!("{}:{}", host.trim(), port);
+    let mut stream = TcpStream::connect_timeout(
+        &address.parse().map_err(|error| format!("invalid host address: {error}"))?,
+        std::time::Duration::from_secs(3),
+    )
+    .map_err(|error| format!("could not reach host: {error}"))?;
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+        .map_err(to_string_err)?;
+    stream
+        .write_all(format!("HELLO {}\n", nickname.replace(['\r', '\n'], " ")).as_bytes())
+        .map_err(to_string_err)?;
+    let mut response = String::new();
+    BufReader::new(stream)
+        .read_line(&mut response)
+        .map_err(to_string_err)?;
+    if response.trim() == "WELCOME" {
+        Ok("Connected to room host".to_string())
+    } else {
+        Err(format!("host rejected presence: {}", response.trim()))
+    }
+}
+
+#[tauri::command]
+fn room_players(state: tauri::State<'_, AppState>) -> Result<Vec<RoomPlayer>, String> {
+    let room = state.room.lock().unwrap_or_else(|error| error.into_inner());
+    let Some(active) = room.as_ref() else { return Ok(Vec::new()); };
+    let mut players = active.players.lock().unwrap_or_else(|error| error.into_inner());
+    prune_players(&mut players);
+    Ok(players.clone())
+}
+
 #[tauri::command]
 fn start_room(request: StartRoom, state: tauri::State<'_, AppState>) -> Result<RoomView, String> {
     let game = request.game.trim();
@@ -209,13 +305,47 @@ fn start_room(request: StartRoom, state: tauri::State<'_, AppState>) -> Result<R
     listener.set_nonblocking(true).map_err(to_string_err)?;
     let port = listener.local_addr().map_err(to_string_err)?.port();
     let stop = Arc::new(AtomicBool::new(false));
+    let players = Arc::new(Mutex::new(Vec::new()));
     let stop_thread = Arc::clone(&stop);
+    let players_thread = Arc::clone(&players);
     thread::spawn(move || {
         while !stop_thread.load(Ordering::Relaxed) {
             match listener.accept() {
-                Ok((stream, address)) => {
-                    log_line(&format!("room: presence connection from {address}"));
-                    drop(stream);
+                Ok((mut stream, address)) => {
+                    let mut line = String::new();
+                    let read = stream
+                        .try_clone()
+                        .ok()
+                        .map(|clone| BufReader::new(clone).read_line(&mut line).unwrap_or(0))
+                        .unwrap_or(0);
+                    if read == 0 {
+                        continue;
+                    }
+                    if line.trim() == "PING" {
+                        let _ = stream.write_all(b"PONG\n");
+                        continue;
+                    }
+                    if let Some(nickname) = line.strip_prefix("HELLO ") {
+                        let nickname = nickname.trim().to_string();
+                        if nickname.is_empty() || nickname.len() > 32 {
+                            let _ = stream.write_all(b"REJECTED\n");
+                            continue;
+                        }
+                        let mut known = players_thread.lock().unwrap_or_else(|error| error.into_inner());
+                        prune_players(&mut known);
+                        let entry = RoomPlayer {
+                            nickname,
+                            address: address.ip().to_string(),
+                            last_seen: now_seconds(),
+                        };
+                        if let Some(existing) = known.iter_mut().find(|player| player.address == entry.address) {
+                            *existing = entry;
+                        } else {
+                            known.push(entry);
+                        }
+                        let _ = stream.write_all(b"WELCOME\n");
+                        log_line(&format!("room: presence from {}", address));
+                    }
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(std::time::Duration::from_millis(100));
@@ -237,7 +367,7 @@ fn start_room(request: StartRoom, state: tauri::State<'_, AppState>) -> Result<R
         game: game.to_string(),
     };
     let mut room = state.room.lock().unwrap_or_else(|error| error.into_inner());
-    if let Some(previous) = room.replace(RoomRuntime { token, port, stop }) {
+    if let Some(previous) = room.replace(RoomRuntime { token, port, stop, players }) {
         previous.stop.store(true, Ordering::Relaxed);
     }
     log_line(&format!("room: started {} on {}:{}", game, host_address, port));
@@ -1088,6 +1218,9 @@ pub fn run() {
             reveal_data,
             detect_zerotier,
             join_zerotier,
+            ping_host,
+            announce_room_player,
+            room_players,
             start_room,
             stop_room,
         ])

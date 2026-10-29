@@ -400,6 +400,17 @@ export type Room = {
   game: string;
 };
 
+export type RoomPlayer = {
+  nickname: string;
+  address: string;
+  last_seen: number;
+};
+
+export type PingResult = {
+  reachable: boolean;
+  message: string;
+};
+
 export type ZeroTierStatus = {
   network_id: string | null;
   status: string;
@@ -422,6 +433,21 @@ export async function detectZeroTier(networkId = ""): Promise<ZeroTierStatus> {
 export async function joinZeroTier(networkId: string): Promise<string> {
   if (!isTauri) return "Preview join requested";
   return invoke<string>("join_zerotier", { networkId });
+}
+
+export async function pingHost(host: string, port: number): Promise<PingResult> {
+  if (!isTauri) return { reachable: true, message: "Preview host reachable" };
+  return invoke<PingResult>("ping_host", { host, port });
+}
+
+export async function announceRoomPlayer(host: string, port: number, nickname: string): Promise<string> {
+  if (!isTauri) return "Preview presence announced";
+  return invoke<string>("announce_room_player", { host, port, nickname });
+}
+
+export async function roomPlayers(): Promise<RoomPlayer[]> {
+  if (!isTauri) return [];
+  return invoke<RoomPlayer[]>("room_players");
 }
 
 let previewRoom: Room | null = null;

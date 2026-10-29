@@ -1,6 +1,6 @@
 <script lang="ts">
   import { fade } from "svelte/transition";
-  import { detectZeroTier, joinZeroTier, startRoom, stopRoom, type Room } from "../library";
+  import { announceRoomPlayer, detectZeroTier, joinZeroTier, pingHost, roomPlayers, startRoom, stopRoom, type Room, type RoomPlayer } from "../library";
 
   let {
     open,
@@ -19,6 +19,10 @@
   let detection = $state("");
   let joinStatus = $state("");
   let room = $state<Room | null>(null);
+  let nickname = $state("");
+  let pingStatus = $state("");
+  let players = $state<RoomPlayer[]>([]);
+  let copied = $state("");
 
   async function create() {
     busy = true;
@@ -89,8 +93,76 @@
     }
   }
 
+  async function ping(active: { host: string; port: string }) {
+    busy = true;
+    error = "";
+    try {
+      const result = await pingHost(active.host, Number(active.port));
+      pingStatus = result.message;
+    } catch (err) {
+      error = String(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function announce(active: { host: string; port: string }) {
+    busy = true;
+    error = "";
+    try {
+      joinStatus = await announceRoomPlayer(active.host, Number(active.port), nickname);
+    } catch (err) {
+      error = String(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  function pingJoined() {
+    if (joinedInvite) void ping(joinedInvite);
+  }
+
+  function announceJoined() {
+    if (joinedInvite) void announce(joinedInvite);
+  }
+
+  $effect(() => {
+    if (!open || !room) return;
+    const timer = setInterval(() => {
+      void roomPlayers().then((next) => (players = next)).catch(() => {});
+    }, 2000);
+    void roomPlayers().then((next) => (players = next)).catch(() => {});
+    return () => clearInterval(timer);
+  });
+
   function invite(active: Room): string {
     return `piratelink://join/${active.token}?network=${active.network_id}&host=${active.host_address}&port=${active.port}`;
+  }
+
+  async function copy(label: string, value: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+      copied = label;
+      setTimeout(() => {
+        if (copied === label) copied = "";
+      }, 1600);
+    } catch (err) {
+      error = `Could not copy ${label}: ${err}`;
+    }
+  }
+
+  function copyRoomValue(label: string, value: "network" | "endpoint" | "invite") {
+    if (!room) return;
+    const text = value === "network"
+      ? room.network_id
+      : value === "endpoint"
+        ? `${room.host_address}:${room.port}`
+        : invite(room);
+    void copy(label, text);
+  }
+
+  function roomInvite(): string {
+    return room ? invite(room) : "";
   }
 </script>
 
@@ -114,12 +186,23 @@
         {#if room}
           <h2>{room.game}</h2>
           <dl>
-            <div><dt>Network</dt><dd>{room.network_id}</dd></div>
-            <div><dt>Host endpoint</dt><dd>{room.host_address}:{room.port}</dd></div>
+            <div><dt>Network</dt><dd><span>{room.network_id}</span><button class="copy" onclick={() => copyRoomValue("network", "network")}>{copied === "network" ? "Copied" : "Copy"}</button></dd></div>
+            <div><dt>Host endpoint</dt><dd><span>{room.host_address}:{room.port}</span><button class="copy" onclick={() => copyRoomValue("endpoint", "endpoint")}>{copied === "endpoint" ? "Copied" : "Copy"}</button></dd></div>
             <div><dt>Status</dt><dd>Waiting for players</dd></div>
           </dl>
+          <p class="label">Connected players</p>
+          {#if players.length}
+            <ul class="players">
+              {#each players as player (player.address)}
+                <li><span>{player.nickname}</span><code>{player.address}</code></li>
+              {/each}
+            </ul>
+          {:else}
+            <p class="note">No guests connected yet.</p>
+          {/if}
           <label class="label" for="invite">Invite link</label>
-          <textarea id="invite" readonly value={invite(room)}></textarea>
+          <textarea id="invite" readonly value={roomInvite()}></textarea>
+          <button class="quiet" onclick={() => copyRoomValue("invite", "invite")}>{copied === "invite" ? "Invite copied" : "Copy invite"}</button>
           <div class="actions">
             <button class="btn" onclick={() => (mode = "create")}>Room details</button>
             <button class="quiet danger" onclick={stopActiveRoom}>Stop room</button>
@@ -159,8 +242,13 @@
             <div><dt>Host endpoint</dt><dd>{joinedInvite.host}:{joinedInvite.port}</dd></div>
             <div><dt>Next step</dt><dd>Join and authorize in ZeroTier</dd></div>
           </dl>
+            <label class="label" for="nickname">PirateLink name</label>
+            <input id="nickname" class="field" bind:value={nickname} placeholder="Your nickname" maxlength="32" />
             <button class="btn" disabled={busy} onclick={joinNetwork}>{busy ? "Joining ZeroTier" : "Join ZeroTier network"}</button>
+            <button class="quiet" disabled={busy} onclick={pingJoined}>{busy ? "Testing" : "Ping host"}</button>
+            <button class="btn" disabled={busy || !nickname.trim()} onclick={announceJoined}>Announce presence</button>
             {#if joinStatus}<p class="note">{joinStatus}. Wait for Central authorization, then check that ZeroTier shows <code>OK</code>.</p>{/if}
+            {#if pingStatus}<p class="note">{pingStatus}</p>{/if}
             <p class="note">After ZeroTier shows <code>OK</code>, connect to the host endpoint from the game.</p>
         {/if}
       {/if}
@@ -189,4 +277,9 @@
   .detect { justify-self: start; }
   .actions { display: flex; align-items: center; gap: 18px; }
   .danger { color: #ff9a8f; }
+  .players { list-style: none; margin: 0 0 12px; padding: 0; border-top: 1px solid var(--line); }
+  .players li { display: flex; justify-content: space-between; gap: 18px; padding: 9px 0; border-bottom: 1px solid var(--line); color: var(--ink); font: 11px var(--font-mono); }
+  .players code { color: var(--ink-faint); }
+  .copy { border: 0; background: transparent; color: var(--ink-faint); padding: 0; font: 9px var(--font-mono); text-transform: uppercase; cursor: pointer; }
+  .copy:hover { color: var(--ink); }
 </style>

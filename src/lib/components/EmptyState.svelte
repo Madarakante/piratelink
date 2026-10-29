@@ -2,9 +2,9 @@
   let { onOpen }: { onOpen: () => void } = $props();
 
   const steps = [
-    "Pick the folder your games live in",
-    "PirateLink scans for executables and shows what it found",
-    "Choose which ones to add, then fetch their covers",
+    "Pick the game's .exe — one file per game",
+    "PirateLink names it from the install folder, not the file name",
+    "Fix the title if it guessed wrong, then add it and fetch the cover",
   ];
 </script>
 
@@ -13,19 +13,20 @@
     <div class="intro">
       <h2>Nothing on<br />the shelf</h2>
       <p class="lead">
-        Point PirateLink at one folder. It ranks the executables it finds and asks before
-        adding anything.
+        Point PirateLink at a game's executable. It reads the title from the folder the game is
+        installed in — a file name like <code>eldenring.exe</code> is not a name — and you can
+        correct it before anything is added.
       </p>
 
       <button class="btn" onclick={onOpen}>
-        Add a folder
+        Add a game
         <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
           <path d="M1 6h10M7 1.6L11.4 6 7 10.4" stroke="currentColor" stroke-width="1.4" fill="none" />
         </svg>
       </button>
 
       <p class="note">
-        No telemetry. The folder stays on your machine; only titles you confirm are sent to
+        No telemetry. The path stays on your machine; only titles you confirm are sent to
         SteamGridDB.
       </p>
     </div>

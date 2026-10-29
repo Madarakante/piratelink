@@ -164,6 +164,80 @@ fn remove_game(id: i64, state: tauri::State<'_, AppState>) -> Result<(), String>
     state.db.remove_game(id).map_err(to_string_err)
 }
 
+/// What a chosen .exe looks like before it joins the library.
+#[derive(Serialize)]
+struct ExecutableInfo {
+    path: String,
+    title: String,
+    install_dir: String,
+    size_bytes: u64,
+    already_in_library: bool,
+}
+
+/// Inspects one executable picked by the user.
+///
+/// The suggested title comes from the install folder rather than the filename,
+/// because a filename is frequently not the game's name (`eldenring.exe`,
+/// `hl2.exe`, `Cyberpunk2077.exe`). The caller shows that suggestion in an
+/// editable field, so a wrong guess costs a keystroke, not a wrong cover.
+#[tauri::command]
+fn inspect_executable(
+    path: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<ExecutableInfo, String> {
+    let exe = Path::new(&path);
+    let meta = std::fs::metadata(exe)
+        .map_err(|err| format!("cannot read {}: {err}", exe.display()))?;
+
+    if !meta.is_file() {
+        log_line(&format!("inspect_executable: not a file: {}", exe.display()));
+        return Err(format!("not a file: {}", exe.display()));
+    }
+    if !exe
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
+    {
+        log_line(&format!("inspect_executable: not an .exe: {}", exe.display()));
+        return Err(format!("not an .exe: {}", exe.display()));
+    }
+
+    let canonical = exe
+        .canonicalize()
+        .unwrap_or_else(|_| exe.to_path_buf())
+        .to_string_lossy()
+        .to_string();
+
+    let already_in_library = state
+        .db
+        .games()
+        .map_err(to_string_err)?
+        .iter()
+        .any(|game| {
+            Path::new(&game.executable)
+                .canonicalize()
+                .unwrap_or_else(|_| PathBuf::from(&game.executable))
+                .to_string_lossy()
+                == canonical
+        });
+
+    let title = scanner::title_for_exe(exe);
+    log_line(&format!(
+        "inspect_executable: {} -> {title:?}",
+        exe.display()
+    ));
+
+    Ok(ExecutableInfo {
+        path: exe.to_string_lossy().to_string(),
+        title,
+        install_dir: exe
+            .parent()
+            .map(|parent| parent.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        size_bytes: meta.len(),
+        already_in_library,
+    })
+}
+
 // -- artwork ---------------------------------------------------------------
 
 #[derive(Serialize)]
@@ -333,6 +407,7 @@ pub fn run() {
             library_list,
             scan_library,
             add_game,
+            inspect_executable,
             remove_game,
             sgdb_status,
             fetch_artwork,

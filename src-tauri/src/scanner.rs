@@ -180,6 +180,16 @@ const STRUCTURAL_DIRS: &[&str] = &[
     "dist",
 ];
 
+/// Best guess at a title for one executable, used when the game is added by
+/// picking its .exe rather than by scanning a folder.
+///
+/// The filename is never trusted: `eldenring.exe`, `hl2.exe` and
+/// `Cyberpunk2077.exe` are all the wrong answer, so the folder the exe lives in
+/// wins, and build folders are skipped on the way up.
+pub fn title_for_exe(exe: &Path) -> String {
+    clean_title(&title_folder(exe).unwrap_or_default())
+}
+
 /// Walks up from the executable until it finds a folder that could be a game name.
 fn title_folder(exe: &Path) -> Option<String> {
     let mut current = exe.parent()?;
@@ -449,6 +459,23 @@ mod tests {
     }
 
     #[test]
+    fn title_for_exe_ignores_the_filename() {
+        let cases = [
+            (r"C:\Games\Elden Ring\Game\eldenring.exe", "Elden Ring"),
+            (r"D:\Hades\Hades.exe", "Hades"),
+            (
+                r"D:\Games\Hades_v1.38261.2_(59229)_[FitGirl Repack]\Hades.exe",
+                "Hades",
+            ),
+            (r"C:\Games\Cyberpunk 2077\bin\x64\Cyberpunk2077.exe", "Cyberpunk 2077"),
+        ];
+
+        for (path, expected) in cases {
+            assert_eq!(title_for_exe(Path::new(path)), expected, "for {path}");
+        }
+    }
+
+    #[test]
     fn title_folder_skips_build_directories() {
         let cases = [
             (r"C:\Games\Elden Ring\eldenring.exe", "Elden Ring"),
@@ -475,8 +502,7 @@ mod tests {
     /// game folder used to produce the title "Game", whose SteamGridDB search
     /// returns a different game entirely.
     #[test]
-    fn nested_executable_is_named_after_the_game_not_its_build_folder() {
-        let tmp = tempfile::tempdir().unwrap();
+    fn nested_executable_is_named_after_the_game_not_its_build_folder() {        let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         write_exe(&root.join("Elden Ring").join("Game").join("eldenring.exe"), 48 * MB);
 

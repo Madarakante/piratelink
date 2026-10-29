@@ -5,9 +5,9 @@ cover plates, hairline rules, monospace metadata, spring physics, and UI sound �
 built on Tauri v2 + Svelte 5 + Rust, with a memory budget it does **not** currently
 meet (see below).
 
-**Status: Phase 1 and Phase 2 complete.** Scan a folder, confirm what it found, and
-covers are fetched from SteamGridDB and cached to disk. The memory target is not hit
-yet.
+**Status: Phase 1 and Phase 2 complete.** Pick a game's `.exe`, confirm the title
+PirateLink derived for it, and the cover is fetched from SteamGridDB and cached to
+disk. The memory target is not hit yet.
 
 ![The shelf](docs/shelf.png)
 
@@ -18,9 +18,9 @@ yet.
 | Area | Detail |
 | --- | --- |
 | Shelf | Filmstrip of uniform plates on one baseline; the selection is pinned to the left margin, wraps at both ends, ~6 covers decoded |
-| Library | SQLite under the app data dir; scan a folder, confirm candidates, remove entries |
+| Library | SQLite under the app data dir; add a game by picking its `.exe`, correct the suggested title, remove entries |
 | Artwork | SteamGridDB cover + hero, re-encoded to WebP at ingest, served from the cache |
-| Input | Keyboard (`←` `→` `Enter` `Space` `Esc` `M` `N` `F3`) **and** gamepad (Xbox / DualSense / DualShock, standard mapping, D-pad or left stick, hold-to-repeat). The hint bar labels itself for whichever device was used last, so a pad shows `× ○ □ △` or `A B X Y`; R3 opens Add games, though the folder picker itself is the Windows dialog and still needs a mouse |
+| Input | Keyboard (`←` `→` `Enter` `Space` `Esc` `M` `N` `F3`) **and** gamepad (Xbox / DualSense / DualShock, standard mapping, D-pad or left stick, hold-to-repeat). The hint bar labels itself for whichever device was used last, so a pad shows `× ○ □ △` or `A B X Y`; R3 opens Add games, though the `.exe` picker itself is the Windows dialog and still needs a mouse |
 | Motion | Custom critically-damped spring in `src/lib/spring.svelte.ts`; parks its `requestAnimationFrame` loop the moment it settles |
 | Audio | One 27 KB OGG sprite, five cues, sliced at playback |
 | Window | Frameless, custom titlebar, drag region, native min/max/close |
@@ -50,7 +50,7 @@ their own and are unaffected.
 | Decoded art on screen | 1 hero + up to 5 covers ≈ 12 MB raster |
 | Renderer JS heap | 4.5 MB (`F3` overlay) |
 | **Whole-process RAM** | **461 MB — over the 200 MB target** |
-| Folder scan, `D:\Games` (10 installs) | ~50 ms, 13 candidates |
+| `scanner` walk, `D:\Games` (10 installs) | ~50 ms, 13 candidates (backend only — the UI adds one `.exe` at a time) |
 
 ### Memory is not where it should be
 
@@ -230,15 +230,19 @@ Two details worth carrying into Phase 4:
 
 ## Phase 2 — library
 
-Wired end to end: scan -> confirm -> fetch -> shelf.
+Wired end to end: pick `.exe` -> confirm title -> fetch -> shelf.
 
 | Piece | File | Notes |
 | --- | --- | --- |
 | SQLite library | `db.rs` | `library.db` under the app data dir, WAL, `user_version` migrations |
-| Scanner | `scanner.rs` | Depth-limited walk with scoring and *reasons*; refuses to guess silently |
+| Title from the install folder | `scanner.rs` | `title_for_exe` walks up past `Game` / `bin` / `Win64` and strips release noise; the filename is never used as a title |
 | SteamGridDB | `sgdb.rs` | Bearer auth, tolerant parsing, 429 retry, 125 ms spacing |
 | Artwork | `artwork.rs` | Decode, downscale to a 600 px ceiling, re-encode WebP (JPEG/PNG fallback) |
-| UI | `src/lib/library.ts`, `ImportSheet.svelte` | One module owns the invoke layer; the sheet is a three-step confirm flow |
+| UI | `src/lib/library.ts`, `ImportSheet.svelte` | One module owns the invoke layer; the sheet is a choose -> review -> add flow with an editable title per file |
+
+The scanner still exists in `scanner.rs` (depth-limited walk, scoring, reasons) but
+the UI no longer calls it: picking the executable is the judgement the scanner was
+guessing at, and it costs the user one click instead of a confirmation screen.
 
 Set the API key once (outside the repo, never committed):
 
@@ -260,10 +264,13 @@ cargo test --lib -- --ignored                  # 2 passed (real API, ~5 s)
 
 Two steps, and both had to be right:
 
-1. **Which folder is the title.** The scanner takes the folder holding the
+1. **Which folder is the title.** `title_for_exe` takes the folder holding the
    executable only if that folder is not structural (`Game`, `bin`, `x64`,
    `Binaries`, `Win64`, `steamapps`, ...); otherwise it walks up. So
-   `Elden Ring\Game\eldenring.exe` is titled **Elden Ring**, not "Game".
+   `Elden Ring\Game\eldenring.exe` is titled **Elden Ring**, not "Game" — and never
+   "eldenring", which is why the filename is not consulted at all. The suggestion
+   is an editable field in the sheet, so a folder named `Games 2` or
+   `Hades_v1.38261.2_[FitGirl Repack]` costs a keystroke rather than a wrong cover.
 2. **Which search result is the game.** `sgdb::best_match` scores every result
    (exact, then prefix, then token overlap) and requires **0.6 similarity**.
    Below that, `fetch_artwork` returns an error instead of attaching something
@@ -273,8 +280,9 @@ Both were wrong once, in a way that silently attached an unrelated game's cover:
 searching "Game" returns a title literally named *GAME*. A wrong cover is worse
 than no cover — it gets cached, and nothing on screen says it is wrong.
 
-If a cover is wrong: open the game and use **Refresh artwork**, or **Remove** and
-re-add it so the title is re-derived.
+If a cover is wrong: fix the title in the sheet before adding — the SteamGridDB
+search uses the field, not the filename. Afterwards, open the game and use
+**Refresh artwork**.
 
 ### What the live API actually does
 
@@ -294,18 +302,18 @@ Recorded because the published spec does not say any of it:
 
 ## Troubleshooting
 
-**`%APPDATA%\app.piratelink.launcher\piratelink.log`** — every command writes a
-start and an exit line, plus any panic. The release build has no console, so this
-is the only trace. Three failures look identical on screen:
+**`%APPDATA%\app.piratelink.launcher\piratelink.log`** — the commands that do real
+work write a line when they finish; the release build has no console, so this is
+the only trace.
 
 | Log shows | Means |
 | --- | --- |
-| no `scan_library: start` | the command never reached Rust — IPC or permission problem |
-| `start` but no `done` | still running, or it panicked (a `PANIC:` line follows) |
-| `done in 12 ms, 13 candidate(s)` | the scan finished; the sheet is what is stuck |
+| `inspect_executable: ... -> "Title"` | the title that will be sent to SteamGridDB — the first thing to check when a cover comes back wrong |
+| `inspect_executable: not an .exe` | the picked path was not an executable; the sheet shows the same message |
+| nothing after picking a file | the Windows dialog returned nothing (you cancelled), so nothing was inspected |
 
-The folder scan is fast: `D:\Games` with ten installs takes about 50 ms. The
-import sheet also abandons a scan after 20 s rather than spinning forever.
+An import that fails (the `.exe` was deleted between picking and adding, the
+database is locked) is reported in the sheet, not the log.
 
 ## Security and privacy
 
@@ -318,9 +326,9 @@ import sheet also abandons a scan after 20 s rather than spinning forever.
 - **The API key stays out of the webview.** It lives in `config.json` under the app
   data directory and is only read by the Rust side; no command returns it.
 - **Windows Defender will flag the release binary.** Worth stating plainly: a small
-  unsigned Rust executable that walks game folders and spawns processes is a shape
-  heuristics dislike. Sign the binary if you distribute it, and do not normalise
-  "add this folder to exclusions" as the fix.
+  unsigned Rust executable that starts other executables is a shape heuristics
+  dislike. Sign the binary if you distribute it, and do not normalise "add this
+  file to exclusions" as the fix.
 
 ## Roadmap
 

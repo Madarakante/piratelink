@@ -34,12 +34,11 @@ type Row = {
   added_at: string;
 };
 
-export type Candidate = {
+export type ExecutableInfo = {
   path: string;
+  /** Best guess at the title, from the install folder rather than the filename. */
+  title: string;
   install_dir: string;
-  name_hint: string;
-  score: number;
-  reasons: string[];
   size_bytes: number;
   already_in_library: boolean;
 };
@@ -129,31 +128,25 @@ const previewParams =
 /** `?preview=empty` starts with an empty library so the onboarding state is reachable. */
 let previewGames: Game[] = previewParams?.get("preview") === "empty" ? [] : [...demoLibrary];
 
-const PREVIEW_CANDIDATES: Candidate[] = [
+const PREVIEW_EXECUTABLES: ExecutableInfo[] = [
   {
     path: "D:\\Games\\Hades\\Hades.exe",
+    title: "Hades",
     install_dir: "D:\\Games\\Hades",
-    name_hint: "Hades",
-    score: 12,
-    reasons: ["named after its folder", "64 MB binary", "close to the root"],
     size_bytes: 67_108_864,
     already_in_library: false,
   },
   {
     path: "D:\\Games\\Cyberpunk 2077\\bin\\x64\\Cyberpunk2077.exe",
+    title: "Cyberpunk 2077",
     install_dir: "D:\\Games\\Cyberpunk 2077\\bin\\x64",
-    name_hint: "Cyberpunk 2077",
-    score: 9,
-    reasons: ["64 MB binary"],
     size_bytes: 71_303_168,
     already_in_library: false,
   },
   {
     path: "D:\\Games\\Sable Tide\\SableTide-Win64-Shipping.exe",
+    title: "Sable Tide",
     install_dir: "D:\\Games\\Sable Tide",
-    name_hint: "Sable Tide",
-    score: 11,
-    reasons: ["Unreal shipping build", "58 MB binary", "ships the Steam API stub"],
     size_bytes: 60_817_408,
     already_in_library: false,
   },
@@ -180,22 +173,49 @@ export async function loadLibrary(): Promise<LibraryResult> {
   };
 }
 
-export async function pickFolder(): Promise<string | null> {
-  if (!isTauri) return "D:\\Games";
+/**
+ * Asks for one or more game executables.
+ *
+ * Importing used to start from a folder scan; picking the .exe directly is both
+ * shorter and more precise, because the user has already made the judgement the
+ * scanner was guessing at.
+ */
+export async function pickExecutables(): Promise<string[]> {
+  if (!isTauri) return PREVIEW_EXECUTABLES.map((exe) => exe.path);
 
   const dialog = await import("@tauri-apps/plugin-dialog");
-  const picked = await dialog.open({ directory: true, multiple: false, title: "Add a games folder" });
-  return typeof picked === "string" ? picked : null;
+  const picked = await dialog.open({
+    multiple: true,
+    title: "Choose a game executable",
+    filters: [{ name: "Executables", extensions: ["exe"] }],
+  });
+
+  if (!picked) return [];
+  return Array.isArray(picked) ? picked : [picked];
 }
 
-export async function addRoot(path: string): Promise<void> {
-  if (!isTauri) return;
-  await invoke("add_library_root", { path });
-}
+/**
+ * Reads a chosen executable and suggests a title for it.
+ *
+ * The suggestion is never hidden: the sheet puts it in an editable field, so a
+ * filename that does not match the game costs one correction instead of a wrong
+ * SteamGridDB search.
+ */
+export async function inspectExecutable(path: string): Promise<ExecutableInfo> {
+  if (!isTauri) {
+    const known = PREVIEW_EXECUTABLES.find((exe) => exe.path === path);
+    if (known) return known;
+    const file = path.split(/[\\/]/).pop() ?? path;
+    return {
+      path,
+      title: file.replace(/\.exe$/i, ""),
+      install_dir: path.replace(/[\\/][^\\/]+$/, ""),
+      size_bytes: 0,
+      already_in_library: false,
+    };
+  }
 
-export async function scanLibrary(): Promise<Candidate[]> {
-  if (!isTauri) return PREVIEW_CANDIDATES;
-  return invoke<Candidate[]>("scan_library");
+  return invoke<ExecutableInfo>("inspect_executable", { path });
 }
 
 export async function addGame(path: string, title: string): Promise<number> {

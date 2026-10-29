@@ -2,11 +2,10 @@
   import { fly, fade } from "svelte/transition";
   import {
     addGame,
-    addRoot,
     fetchArtwork,
-    pickFolder,
-    scanLibrary,
-    type Candidate,
+    inspectExecutable,
+    pickExecutables,
+    type ExecutableInfo,
   } from "../library";
 
   let {
@@ -21,53 +20,35 @@
     onImported: () => void;
   } = $props();
 
-  type Step = "choose" | "scanning" | "review" | "importing" | "done";
+  type Step = "choose" | "review" | "importing" | "done";
+  type Entry = ExecutableInfo & { include: boolean };
 
   let step = $state<Step>("choose");
-  let rootPath = $state("");
-  let candidates = $state<Candidate[]>([]);
-  let selected = $state<string[]>([]);
+  let entries = $state<Entry[]>([]);
   let error = $state("");
-  let elapsed = $state(0);
   let done = $state(0);
   let total = $state(0);
   let label = $state("");
   let added = $state(0);
   let artFailed = $state(0);
 
-  /** A scan of a real folder finishes in milliseconds; anything slower is a bug,
-   *  and it must never leave the sheet spinning forever. */
-  const SCAN_TIMEOUT_MS = 20_000;
-
-  function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
-    return Promise.race([
-      promise,
-      new Promise<T>((_, reject) =>
-        setTimeout(() => reject(new Error(`${what} did not finish within ${ms / 1000}s.`)), ms),
-      ),
-    ]);
-  }
-
-  const selectable = $derived(candidates.filter((c) => !c.already_in_library));
-  const allSelected = $derived(
-    selectable.length > 0 && selected.length === selectable.length,
-  );
+  const selectable = $derived(entries.filter((entry) => !entry.already_in_library));
+  const chosen = $derived(selectable.filter((entry) => entry.include));
+  const allSelected = $derived(selectable.length > 0 && chosen.length === selectable.length);
 
   const stepLabel = $derived(
     step === "review"
       ? "Step 2 — Review"
       : step === "importing"
-        ? "Step 3 — Import"
+        ? "Step 3 — Add"
         : step === "done"
           ? "Complete"
-          : "Step 1 — Folder",
+          : "Step 1 — Executable",
   );
 
   function reset() {
     step = "choose";
-    rootPath = "";
-    candidates = [];
-    selected = [];
+    entries = [];
     error = "";
     done = 0;
     total = 0;
@@ -82,66 +63,68 @@
     onClose();
   }
 
-  async function chooseFolder() {
+  /**
+   * Picking the .exe means the title has to come from somewhere, and the file
+   * name is usually the worst possible answer — `eldenring.exe` is not a game
+   * name. The backend names it after the install folder instead, and every entry
+   * lands here as an editable field, so a bad guess costs a correction rather
+   * than a wrong SteamGridDB match.
+   */
+  async function chooseFiles() {
     error = "";
+    let paths: string[] = [];
     try {
-      const folder = await pickFolder();
-      if (!folder) return;
-      rootPath = folder;
-      await addRoot(folder);
-      await runScan();
+      paths = await pickExecutables();
     } catch (err) {
       error = String(err);
+      return;
     }
-  }
+    if (!paths.length) return;
 
-  async function runScan() {
-    step = "scanning";
-    elapsed = 0;
-    const timer = setInterval(() => (elapsed += 1), 1000);
-
-    try {
-      candidates = await withTimeout(scanLibrary(), SCAN_TIMEOUT_MS, "The folder scan");
-      selected = candidates.filter((c) => !c.already_in_library).map((c) => c.path);
-      step = "review";
-    } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
-      step = "choose";
-    } finally {
-      clearInterval(timer);
+    const fresh: Entry[] = [];
+    for (const path of paths) {
+      if (entries.some((entry) => entry.path === path)) continue;
+      try {
+        const info = await inspectExecutable(path);
+        fresh.push({ ...info, include: !info.already_in_library });
+      } catch (err) {
+        error = `${path} — ${err instanceof Error ? err.message : String(err)}`;
+      }
     }
-  }
 
-  function toggle(path: string) {
-    selected = selected.includes(path)
-      ? selected.filter((p) => p !== path)
-      : [...selected, path];
+    if (!fresh.length) return;
+    entries = [...entries, ...fresh];
+    step = "review";
   }
 
   function toggleAll() {
-    selected = allSelected ? [] : selectable.map((c) => c.path);
+    const next = !allSelected;
+    for (const entry of selectable) entry.include = next;
   }
 
-  async function importSelected() {
-    if (!selected.length) return;
+  function remove(path: string) {
+    entries = entries.filter((entry) => entry.path !== path);
+    if (!entries.length) step = "choose";
+  }
+
+  async function addSelected() {
+    if (!chosen.length) return;
     step = "importing";
     error = "";
-    total = selected.length;
+    total = chosen.length;
     done = 0;
     added = 0;
     artFailed = 0;
 
-    for (const path of selected) {
-      const candidate = candidates.find((c) => c.path === path);
-      if (!candidate) continue;
-
-      label = candidate.name_hint || candidate.path;
+    for (const entry of chosen) {
+      const title = entry.title.trim() || entry.path.split(/[\\/]/).pop() || "Untitled";
+      label = title;
       try {
-        const id = await addGame(path, candidate.name_hint);
+        const id = await addGame(entry.path, title);
         added += 1;
 
         if (canFetchArt) {
-          label = `${candidate.name_hint} — artwork`;
+          label = `${title} — artwork`;
           try {
             await fetchArtwork(id);
           } catch {
@@ -150,7 +133,7 @@
           }
         }
       } catch (err) {
-        error = String(err);
+        error = `${title} — ${err instanceof Error ? err.message : String(err)}`;
       }
       done += 1;
     }
@@ -160,6 +143,7 @@
   }
 
   function mb(bytes: number): string {
+    if (!bytes) return "—";
     return `${Math.round(bytes / (1024 * 1024))} MB`;
   }
 </script>
@@ -173,9 +157,8 @@
         <div class="titles">
           <p class="label">{stepLabel}</p>
           <h2>
-            {#if step === "choose"}Choose a folder
-            {:else if step === "scanning"}Scanning
-            {:else if step === "review"}Pick what to add
+            {#if step === "choose"}Choose a game
+            {:else if step === "review"}Name what you picked
             {:else if step === "importing"}Adding {done + 1} of {total}
             {:else}Done{/if}
           </h2>
@@ -194,68 +177,65 @@
 
         {#if step === "choose"}
           <p class="lead">
-            PirateLink looks for executables up to four folders deep, ignores installers and
-            redistributables, and ranks what is left. Nothing is added without your say-so.
+            Point at the game's <code>.exe</code>. Filenames are often useless — <code>eldenring.exe</code>,
+            <code>hl2.exe</code>, <code>Cyberpunk2077.exe</code> — so the title is taken from the folder
+            the game is installed in, and you can correct it before it is added.
           </p>
           <div class="row">
-            <button class="btn" onclick={chooseFolder}>Choose folder</button>
-            {#if rootPath}<span class="path num">{rootPath}</span>{/if}
+            <button class="btn" onclick={chooseFiles}>Choose executable</button>
+            <span class="note">Pick one, or several at once.</span>
           </div>
-        {:else if step === "scanning"}
-          <div class="row">
-            <span class="spinner" aria-hidden="true"></span>
-            <span class="path num">Walking {rootPath}{elapsed > 0 ? ` (${elapsed}s)` : ""}</span>
-          </div>
-          <p class="note">A normal scan finishes in well under a second.</p>
         {:else if step === "review"}
-          {#if candidates.length === 0}
-            <p class="lead">No executables worth suggesting in that folder. Try the parent folder.</p>
-            <div class="row">
-              <button class="btn btn-ghost" onclick={chooseFolder}>Choose another folder</button>
-            </div>
-          {:else}
-            <div class="toolbar">
-              <button class="quiet" onclick={toggleAll}>
-                {allSelected ? "Select none" : "Select all"}
-              </button>
-              <span class="label">{selected.length} of {selectable.length} selected</span>
-            </div>
+          <div class="toolbar">
+            <button class="quiet" onclick={toggleAll} disabled={!selectable.length}>
+              {allSelected ? "Select none" : "Select all"}
+            </button>
+            <span class="label">{chosen.length} of {selectable.length} selected</span>
+          </div>
 
-            <ul class="list scroll-thin">
-              <!-- Keyed by index, not path: a duplicate path (junctions can produce
-                   one) would throw on a keyed each and freeze the sheet mid-update. -->
-              {#each candidates as candidate, i (i)}
-                {@const checked = selected.includes(candidate.path)}
-                <li class:disabled={candidate.already_in_library}>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      disabled={candidate.already_in_library}
-                      onchange={() => toggle(candidate.path)}
-                    />
-                    <span class="text">
-                      <span class="title">
-                        {candidate.name_hint || candidate.path.split(/[\\/]/).pop()}
-                        {#if candidate.already_in_library}<em>already added</em>{/if}
-                      </span>
-                      <span class="sub num">{candidate.path}</span>
-                      <span class="reasons num">
-                        {mb(candidate.size_bytes)} · {candidate.reasons.join(" · ")}
-                      </span>
-                    </span>
-                  </label>
-                </li>
-              {/each}
-            </ul>
+          <ul class="list scroll-thin">
+            {#each entries as entry (entry.path)}
+              <li class:disabled={entry.already_in_library} class:off={!entry.include}>
+                <label class="check">
+                  <input
+                    type="checkbox"
+                    bind:checked={entry.include}
+                    disabled={entry.already_in_library}
+                    aria-label="Include {entry.title}"
+                  />
+                </label>
+                <div class="text">
+                  <input
+                    class="name"
+                    bind:value={entry.title}
+                    disabled={entry.already_in_library}
+                    aria-label="Title for {entry.path}"
+                    spellcheck="false"
+                    placeholder="Title"
+                  />
+                  <span class="sub num">{entry.path}</span>
+                  <span class="reasons num">
+                    {mb(entry.size_bytes)}
+                    {#if entry.already_in_library}<em>already added</em>{/if}
+                  </span>
+                </div>
+                {#if !entry.already_in_library}
+                  <button class="drop" aria-label="Remove {entry.title}" onclick={() => remove(entry.path)}>
+                    <svg viewBox="0 0 12 12" width="9" height="9">
+                      <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.2" />
+                    </svg>
+                  </button>
+                {/if}
+              </li>
+            {/each}
+          </ul>
 
-            <div class="row end">
-              <button class="quiet" onclick={chooseFolder}>Another folder</button>
-              <button class="btn" onclick={importSelected} disabled={selected.length === 0}>
-                Add {selected.length} {selected.length === 1 ? "game" : "games"}
-              </button>
-            </div>
-          {/if}
+          <div class="row end">
+            <button class="quiet" onclick={chooseFiles}>Another file</button>
+            <button class="btn" onclick={addSelected} disabled={chosen.length === 0}>
+              Add {chosen.length} {chosen.length === 1 ? "game" : "games"}
+            </button>
+          </div>
         {:else if step === "importing"}
           <div class="progress">
             <div class="bar"><i style="width: {(done / Math.max(1, total)) * 100}%"></i></div>
@@ -274,7 +254,7 @@
           {#if !canFetchArt}
             <p class="note">
               No SteamGridDB key configured, so covers were skipped. Add one to
-              <code>config.json</code> and re-scan to fetch them.
+              <code>config.json</code> and use Refresh artwork on the record page.
             </p>
           {/if}
           <div class="row end">
@@ -387,6 +367,11 @@
     line-height: 1.55;
   }
 
+  .row .note {
+    margin: 0;
+  }
+
+  .lead code,
   .note code {
     padding: 1px 5px;
     background: rgba(255, 255, 255, 0.07);
@@ -414,7 +399,7 @@
   }
 
   .row.end {
-    justify-content: flex-end;
+    justify-content: space-between;
   }
 
   .path {
@@ -442,6 +427,11 @@
   }
 
   li {
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr) 18px;
+    align-items: start;
+    gap: 13px;
+    padding: 12px 2px;
     border-bottom: 1px solid var(--line);
   }
 
@@ -449,19 +439,19 @@
     opacity: 0.42;
   }
 
-  label {
-    display: flex;
-    align-items: flex-start;
-    gap: 13px;
-    padding: 12px 2px;
+  li.off .text {
+    opacity: 0.45;
+  }
+
+  .check {
+    padding-top: 4px;
     cursor: pointer;
   }
 
   input[type="checkbox"] {
     width: 14px;
     height: 14px;
-    margin-top: 3px;
-    flex: none;
+    margin: 0;
     accent-color: var(--ink);
   }
 
@@ -472,21 +462,62 @@
     min-width: 0;
   }
 
-  .title {
+  /* The title is a field, not a label: renaming is the whole point of this step. */
+  .name {
+    width: auto;
+    max-width: 100%;
+    field-sizing: content;
+    padding: 1px 0 3px;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    background: transparent;
+    color: var(--ink);
+    font: inherit;
     font-size: 13.5px;
     font-weight: 600;
     letter-spacing: -0.01em;
+    transition: border-color var(--dur-1) linear;
   }
 
-  .title em {
-    margin-left: 9px;
+  .name:hover:not(:disabled) {
+    border-bottom-color: var(--line-strong);
+  }
+
+  .name:focus {
+    outline: none;
+    border-bottom-color: var(--accent);
+  }
+
+  .name::placeholder {
     color: var(--ink-ghost);
-    font-family: var(--font-mono);
-    font-size: 9px;
-    font-style: normal;
-    font-weight: 500;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
+  }
+
+  .drop {
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    margin-top: 2px;
+    border: 0;
+    border-radius: 2px;
+    background: transparent;
+    color: var(--ink-ghost);
+    cursor: pointer;
+    opacity: 0;
+    transition:
+      opacity var(--dur-1) linear,
+      background var(--dur-1) linear,
+      color var(--dur-1) linear;
+  }
+
+  li:hover .drop,
+  .drop:focus-visible {
+    opacity: 1;
+  }
+
+  .drop:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--ink);
   }
 
   .sub,
@@ -500,6 +531,17 @@
 
   .reasons {
     color: var(--ink-faint);
+  }
+
+  .reasons em {
+    margin-left: 9px;
+    color: var(--ink-ghost);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-style: normal;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
   }
 
   .progress {
@@ -530,21 +572,5 @@
 
   .bar-row .path {
     color: var(--ink-dim);
-  }
-
-  .spinner {
-    width: 13px;
-    height: 13px;
-    flex: none;
-    border-radius: 50%;
-    border: 1px solid var(--line-strong);
-    border-top-color: var(--ink);
-    animation: spin 800ms linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
   }
 </style>

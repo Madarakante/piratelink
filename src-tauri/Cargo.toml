@@ -1,0 +1,43 @@
+[package]
+name = "piratelink"
+version = "0.1.0"
+description = "PirateLink - console-style game launcher"
+authors = ["PirateLink"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "piratelink_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+reqwest = { version = "0.13.3", features = ["json"] }
+thiserror = "2.0.21"
+tokio = { version = "1.53.3", features = ["rt", "rt-multi-thread", "time"] }
+image = { version = "0.25.6", default-features = false, features = ["png", "jpeg", "webp"] }
+tauri-plugin-dialog = "2.0.0-rc.8"
+
+[profile.dev]
+# WebView2 + Tauri debug builds are sluggish at opt-level 0; keep deps fast, app debuggable.
+opt-level = 1
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
+
+[dev-dependencies]
+tempfile = "3.27.0"

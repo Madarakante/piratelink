@@ -1,0 +1,26 @@
+{
+  "file": "/audio/ui-sprite.ogg",
+  "duration": 2.86,
+  "cues": {
+    "tick": {
+      "start": 0.0,
+      "duration": 0.13
+    },
+    "select": {
+      "start": 0.17,
+      "duration": 0.54
+    },
+    "back": {
+      "start": 0.77,
+      "duration": 0.3
+    },
+    "chime": {
+      "start": 1.13,
+      "duration": 0.95
+    },
+    "open": {
+      "start": 2.16,
+      "duration": 0.62
+    }
+  }
+}

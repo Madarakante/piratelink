@@ -1,6 +1,7 @@
 mod artwork;
 mod config;
 mod db;
+mod emulator;
 mod scanner;
 mod sgdb;
 
@@ -142,12 +143,17 @@ async fn scan_library(state: tauri::State<'_, AppState>) -> Result<Vec<Candidate
 
 #[tauri::command]
 fn add_game(path: String, title: String, state: tauri::State<'_, AppState>) -> Result<Game, String> {
-    let exe = Path::new(&path);
-    let install_dir = exe
+    let file = Path::new(&path);
+    let install_dir = file
         .parent()
-        .ok_or_else(|| "executable has no parent directory".to_string())?
+        .ok_or_else(|| "game file has no parent directory".to_string())?
         .to_string_lossy()
         .to_string();
+
+    // Derived here, never taken from the webview: the extension is the only thing
+    // that decides whether a row is started directly or handed to an emulator.
+    let platform = platform_for(file).to_string();
+    log_line(&format!("add_game: {path} ({platform}) -> {title:?}"));
 
     state
         .db
@@ -155,8 +161,18 @@ fn add_game(path: String, title: String, state: tauri::State<'_, AppState>) -> R
             title,
             executable: path,
             install_dir,
+            platform,
         })
         .map_err(to_string_err)
+}
+
+/// `"switch"` for a console ROM, `"pc"` for a Windows executable.
+fn platform_for(path: &Path) -> &'static str {
+    if scanner::is_rom(path) {
+        "switch"
+    } else {
+        "pc"
+    }
 }
 
 #[tauri::command]
@@ -164,46 +180,55 @@ fn remove_game(id: i64, state: tauri::State<'_, AppState>) -> Result<(), String>
     state.db.remove_game(id).map_err(to_string_err)
 }
 
-/// What a chosen .exe looks like before it joins the library.
+/// What a chosen file looks like before it joins the library.
 #[derive(Serialize)]
-struct ExecutableInfo {
+struct GameFileInfo {
     path: String,
     title: String,
     install_dir: String,
+    /// `"pc"` or `"switch"`.
+    platform: String,
     size_bytes: u64,
     already_in_library: bool,
 }
 
-/// Inspects one executable picked by the user.
+/// Inspects one game file picked by the user: a Windows executable or a
+/// console ROM.
 ///
-/// The suggested title comes from the install folder rather than the filename,
-/// because a filename is frequently not the game's name (`eldenring.exe`,
-/// `hl2.exe`, `Cyberpunk2077.exe`). The caller shows that suggestion in an
-/// editable field, so a wrong guess costs a keystroke, not a wrong cover.
+/// The suggested title for an executable comes from the install folder rather
+/// than the filename, because a filename is frequently not the game's name
+/// (`eldenring.exe`, `hl2.exe`, `Cyberpunk2077.exe`). A ROM is the opposite: the
+/// dump is named after the game, so the filename is cleaned of ids and versions
+/// instead. Either way the caller shows the suggestion in an editable field, so
+/// a wrong guess costs a keystroke, not a wrong cover.
 #[tauri::command]
-fn inspect_executable(
-    path: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<ExecutableInfo, String> {
-    let exe = Path::new(&path);
-    let meta = std::fs::metadata(exe)
-        .map_err(|err| format!("cannot read {}: {err}", exe.display()))?;
+fn inspect_file(path: String, state: tauri::State<'_, AppState>) -> Result<GameFileInfo, String> {
+    let file = Path::new(&path);
+    let meta = std::fs::metadata(file)
+        .map_err(|err| format!("cannot read {}: {err}", file.display()))?;
 
     if !meta.is_file() {
-        log_line(&format!("inspect_executable: not a file: {}", exe.display()));
-        return Err(format!("not a file: {}", exe.display()));
-    }
-    if !exe
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
-    {
-        log_line(&format!("inspect_executable: not an .exe: {}", exe.display()));
-        return Err(format!("not an .exe: {}", exe.display()));
+        log_line(&format!("inspect_file: not a file: {}", file.display()));
+        return Err(format!("not a file: {}", file.display()));
     }
 
-    let canonical = exe
+    let is_exe = file
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"));
+    if !is_exe && !scanner::is_rom(file) {
+        log_line(&format!(
+            "inspect_file: unsupported extension: {}",
+            file.display()
+        ));
+        return Err(format!(
+            "not a game file: {} (expected .exe, .nsp, .xci or .nro)",
+            file.display()
+        ));
+    }
+
+    let canonical = file
         .canonicalize()
-        .unwrap_or_else(|_| exe.to_path_buf())
+        .unwrap_or_else(|_| file.to_path_buf())
         .to_string_lossy()
         .to_string();
 
@@ -220,19 +245,25 @@ fn inspect_executable(
                 == canonical
         });
 
-    let title = scanner::title_for_exe(exe);
+    let platform = platform_for(file);
+    let title = if platform == "switch" {
+        scanner::title_for_rom(file)
+    } else {
+        scanner::title_for_exe(file)
+    };
     log_line(&format!(
-        "inspect_executable: {} -> {title:?}",
-        exe.display()
+        "inspect_file: {} ({platform}) -> {title:?}",
+        file.display()
     ));
 
-    Ok(ExecutableInfo {
-        path: exe.to_string_lossy().to_string(),
+    Ok(GameFileInfo {
+        path: file.to_string_lossy().to_string(),
         title,
-        install_dir: exe
+        install_dir: file
             .parent()
             .map(|parent| parent.to_string_lossy().to_string())
             .unwrap_or_default(),
+        platform: platform.to_string(),
         size_bytes: meta.len(),
         already_in_library,
     })
@@ -334,12 +365,199 @@ async fn fetch_artwork(id: i64, state: tauri::State<'_, AppState>) -> Result<Art
     Ok(artwork)
 }
 
+/// One candidate in the manual picker's search results.
+#[derive(Serialize)]
+struct ArtGame {
+    id: i64,
+    name: String,
+    verified: bool,
+}
+
+/// One thumbnail in the manual picker.
+#[derive(Serialize)]
+struct ArtOption {
+    id: i64,
+    thumb: String,
+    /// Full-size asset, used when the choice is applied and for a larger preview.
+    url: String,
+    width: u32,
+    height: u32,
+}
+
+#[derive(Serialize)]
+struct ArtChoices {
+    covers: Vec<ArtOption>,
+    heroes: Vec<ArtOption>,
+}
+
+/// Free-text SteamGridDB search for the manual picker.
+///
+/// Unlike the import path this makes no similarity judgement: the user is looking
+/// at the names and picking one. That is exactly what unblocks titles SteamGridDB
+/// spells differently from the folder they came in (FC 26 is listed as
+/// "EA SPORTS FCT 26"), which the automatic matcher must refuse.
+#[tauri::command]
+async fn search_artwork(
+    query: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<ArtGame>, String> {
+    if !state.sgdb.has_key() {
+        return Err("SteamGridDB API key not configured".to_string());
+    }
+    let term = query.trim();
+    if term.len() < 2 {
+        return Ok(Vec::new());
+    }
+
+    let results = state.sgdb.search(term).await.map_err(to_string_err)?;
+    Ok(results
+        .into_iter()
+        .take(24)
+        .map(|game| ArtGame {
+            id: game.id,
+            name: game.name,
+            verified: game.verified,
+        })
+        .collect())
+}
+
+/// Every usable asset SteamGridDB has for one game, as thumbnails.
+///
+/// Tagged artwork is filtered here for the same reason it is filtered in
+/// `pick_best`: offering it would make the picker a way around the veto.
+#[tauri::command]
+async fn artwork_choices(
+    sgdb_id: i64,
+    state: tauri::State<'_, AppState>,
+) -> Result<ArtChoices, String> {
+    if !state.sgdb.has_key() {
+        return Err("SteamGridDB API key not configured".to_string());
+    }
+
+    let option = |asset: &sgdb::Asset| ArtOption {
+        id: asset.id,
+        thumb: asset.thumb.clone(),
+        url: asset.url.clone(),
+        width: asset.width,
+        height: asset.height,
+    };
+
+    let covers = state
+        .sgdb
+        .grids(sgdb_id, None)
+        .await
+        .map_err(to_string_err)?
+        .iter()
+        .filter(|asset| sgdb::is_safe(asset))
+        .take(24)
+        .map(option)
+        .collect();
+
+    let heroes = state
+        .sgdb
+        .heroes(sgdb_id)
+        .await
+        .map_err(to_string_err)?
+        .iter()
+        .filter(|asset| sgdb::is_safe(asset))
+        .take(12)
+        .map(option)
+        .collect();
+
+    Ok(ArtChoices { covers, heroes })
+}
+
+/// Applies artwork the user picked by hand.
+///
+/// Either asset id may be absent, in which case that slot keeps whatever it had:
+/// changing a cover should not silently discard a hero the user chose earlier.
+/// The chosen SteamGridDB id is recorded even when nothing is replaced, so a later
+/// refresh starts from the right entry instead of re-guessing the title.
+#[tauri::command]
+async fn apply_artwork(
+    id: i64,
+    sgdb_id: i64,
+    cover_id: Option<i64>,
+    hero_id: Option<i64>,
+    state: tauri::State<'_, AppState>,
+) -> Result<Artwork, String> {
+    state
+        .db
+        .game(id)
+        .map_err(to_string_err)?
+        .ok_or_else(|| format!("no game with id {id}"))?;
+
+    if !state.sgdb.has_key() {
+        return Err("SteamGridDB API key not configured".to_string());
+    }
+
+    let art_dir = state.config.art_dir();
+    std::fs::create_dir_all(&art_dir).map_err(to_string_err)?;
+
+    let mut artwork = Artwork {
+        sgdb_id: Some(sgdb_id),
+        cover: None,
+        hero: None,
+    };
+
+    if let Some(want) = cover_id {
+        let grids = state.sgdb.grids(sgdb_id, None).await.map_err(to_string_err)?;
+        let asset = grids
+            .iter()
+            .find(|asset| asset.id == want)
+            .ok_or_else(|| format!("cover {want} is no longer offered by SteamGridDB"))?;
+        let bytes = state.sgdb.fetch_bytes(&asset.url).await.map_err(to_string_err)?;
+        let file = artwork::store(
+            &bytes,
+            &art_dir,
+            &format!("{id}-cover"),
+            artwork::COVER_MAX_WIDTH,
+        )?;
+        artwork.cover = Some(file.to_string_lossy().to_string());
+    }
+
+    if let Some(want) = hero_id {
+        let heroes = state.sgdb.heroes(sgdb_id).await.map_err(to_string_err)?;
+        let asset = heroes
+            .iter()
+            .find(|asset| asset.id == want)
+            .ok_or_else(|| format!("hero {want} is no longer offered by SteamGridDB"))?;
+        let bytes = state.sgdb.fetch_bytes(&asset.url).await.map_err(to_string_err)?;
+        let file = artwork::store(
+            &bytes,
+            &art_dir,
+            &format!("{id}-hero"),
+            artwork::HERO_MAX_WIDTH,
+        )?;
+        artwork.hero = Some(file.to_string_lossy().to_string());
+    }
+
+    log_line(&format!(
+        "apply_artwork: {id} <- sgdb {sgdb_id} cover {:?} hero {:?}",
+        cover_id, hero_id
+    ));
+
+    state
+        .db
+        .set_artwork(
+            id,
+            artwork.sgdb_id,
+            artwork.cover.as_deref(),
+            artwork.hero.as_deref(),
+            None,
+        )
+        .map_err(to_string_err)?;
+
+    Ok(artwork)
+}
+
 // -- launching -------------------------------------------------------------
 
 /// Launches a library entry.
 ///
 /// The path comes from the database, never from the frontend: the webview can ask
-/// for game *id* N, but it cannot ask for an arbitrary executable.
+/// for game *id* N, but it cannot ask for an arbitrary executable. A Windows game
+/// is started directly; a console ROM is handed to the emulator found for it.
 #[tauri::command]
 fn launch_game(id: i64, state: tauri::State<'_, AppState>) -> Result<(), String> {
     let game = state
@@ -348,22 +566,67 @@ fn launch_game(id: i64, state: tauri::State<'_, AppState>) -> Result<(), String>
         .map_err(to_string_err)?
         .ok_or_else(|| format!("no game with id {id}"))?;
 
-    let exe = Path::new(&game.executable).to_path_buf();
-    if !exe.is_file() {
-        return Err(format!("executable not found: {}", game.executable));
+    let file = Path::new(&game.executable).to_path_buf();
+    if !file.is_file() {
+        return Err(format!("game file not found: {}", game.executable));
     }
 
-    let dir = exe
+    if game.platform == "switch" {
+        return launch_rom(&game, &file, state.config.ryujinx.as_deref());
+    }
+
+    let dir = file
         .parent()
         .ok_or_else(|| "executable has no parent directory".to_string())?;
 
     // Many games resolve assets relative to their working directory, so set it to
     // the install folder rather than inheriting the launcher's.
-    Command::new(&exe)
+    Command::new(&file)
         .current_dir(dir)
         .spawn()
         .map(|_| ())
-        .map_err(|e| format!("could not start {}: {e}", exe.display()))
+        .map_err(|e| format!("could not start {}: {e}", file.display()))
+}
+
+/// Opens a ROM with the Switch emulator, or explains exactly what is missing.
+fn launch_rom(
+    game: &Game,
+    rom: &Path,
+    configured: Option<&Path>,
+) -> Result<(), String> {
+    let emulator = emulator::find(configured, Some(rom)).ok_or_else(|| {
+        log_line(&format!("launch_game: no emulator for {}", rom.display()));
+        format!(
+            "no Switch emulator found for \"{}\" — put Ryujinx on PATH, install it in a \
+             standard location, or name its executable in config.json as \"ryujinx_path\"",
+            game.title
+        )
+    })?;
+
+    log_line(&format!(
+        "launch_game: {} -> {} {}",
+        game.title,
+        emulator.display(),
+        rom.display()
+    ));
+
+    emulator::launch(&emulator, rom)
+        .map(|_| ())
+        .map_err(|e| format!("could not start {}: {e}", emulator.display()))
+}
+
+/// Where a Switch game would be opened from, so the UI can say it plainly.
+#[derive(Serialize)]
+struct EmulatorStatus {
+    path: Option<String>,
+}
+
+#[tauri::command]
+fn emulator_status(state: tauri::State<'_, AppState>) -> EmulatorStatus {
+    let found = emulator::find(state.config.ryujinx.as_deref(), None);
+    EmulatorStatus {
+        path: found.map(|path| path.to_string_lossy().to_string()),
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -407,11 +670,15 @@ pub fn run() {
             library_list,
             scan_library,
             add_game,
-            inspect_executable,
+            inspect_file,
             remove_game,
             sgdb_status,
             fetch_artwork,
+            search_artwork,
+            artwork_choices,
+            apply_artwork,
             launch_game,
+            emulator_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PirateLink");
@@ -453,6 +720,7 @@ mod pipeline_tests {
                 title: candidate.name_hint.clone(),
                 executable: candidate.path.clone(),
                 install_dir: candidate.install_dir.clone(),
+                platform: "pc".into(),
             })
             .unwrap();
 

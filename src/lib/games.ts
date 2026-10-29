@@ -24,6 +24,8 @@ export type Game = {
   /** Set for rows that came from the database; absent for demo entries. */
   executable?: string;
   dbId?: number;
+  /** `"pc"` for a Windows executable, `"switch"` for a ROM Ryujinx opens. */
+  platform?: "pc" | "switch";
 };
 
 export const demoLibrary: Game[] = [

@@ -5,9 +5,10 @@ cover plates, hairline rules, monospace metadata, spring physics, and UI sound �
 built on Tauri v2 + Svelte 5 + Rust, with a memory budget it does **not** currently
 meet (see below).
 
-**Status: Phase 1 and Phase 2 complete.** Pick a game's `.exe`, confirm the title
-PirateLink derived for it, and the cover is fetched from SteamGridDB and cached to
-disk. The memory target is not hit yet.
+**Status: Phase 1 and Phase 2 complete.** Pick a game's `.exe` — or a Switch dump
+(`.nsp`, `.xci`, `.nro`) — confirm the title PirateLink derived for it, and the
+cover is fetched from SteamGridDB and cached to disk. Artwork that the automatic
+match refuses can be picked by hand. The memory target is not hit yet.
 
 ![The shelf](docs/shelf.png)
 
@@ -18,8 +19,9 @@ disk. The memory target is not hit yet.
 | Area | Detail |
 | --- | --- |
 | Shelf | Filmstrip of uniform plates on one baseline; the selection is pinned to the left margin, wraps at both ends, ~6 covers decoded |
-| Library | SQLite under the app data dir; add a game by picking its `.exe`, correct the suggested title, remove entries |
-| Artwork | SteamGridDB cover at 600 px and hero at up to 3840 px (the 4K copy is preferred over the 1920×620 one), stored without resampling and losslessly as WebP, served from the cache |
+| Library | SQLite under the app data dir; add a game by picking its `.exe` or a Switch dump (`.nsp`, `.xci`, `.nro`), correct the suggested title, remove entries |
+| Artwork | SteamGridDB cover at 600 px and hero at up to 3840 px (the 4K copy is preferred over the 1920×620 one), stored without resampling and losslessly as WebP, served from the cache. **Change art** opens a picker: search SteamGridDB by hand, then click the cover or hero to apply it |
+| Switch | A ROM is recognised by extension, launched as `Ryujinx.exe "<rom>"`, and gets the same shelf, art and import flow as a PC game |
 | Input | Keyboard (`←` `→` `Enter` `Space` `Esc` `M` `N` `F3`) **and** gamepad (Xbox / DualSense / DualShock, standard mapping, D-pad or left stick, hold-to-repeat). The hint bar labels itself for whichever device was used last, so a pad shows `× ○ □ △` or `A B X Y`; R3 opens Add games, though the `.exe` picker itself is the Windows dialog and still needs a mouse |
 | Motion | Custom critically-damped spring in `src/lib/spring.svelte.ts`; parks its `requestAnimationFrame` loop the moment it settles |
 | Audio | One 27 KB OGG sprite, five cues, sliced at playback |
@@ -29,6 +31,30 @@ disk. The memory target is not hit yet.
 | | | |
 | --- | --- | --- |
 | ![Empty](docs/empty.png) | ![Import](docs/import.png) | ![Details](docs/detail.png) |
+
+## Switch games
+
+A `.nsp`, `.xci` or `.nro` is treated as a console title, not as an executable:
+
+| Piece | Behaviour |
+| --- | --- |
+| Recognition | Extension only, case-insensitive. The platform is derived on the Rust side from the picked file, never trusted from the webview |
+| Title | The filename, cleaned: dump ids (`[0100F2C0115B6000]`), versions (`[v0]`), regions (`(USA)`) and `(Rev 1)` are stripped. It stays editable in the import sheet |
+| Launch | `Ryujinx.exe "<rom>"`. The emulator is looked for in `ryujinx_path` from `config.json` first, then in known install locations, then in a two-level scan of the ROM's drive and the system drive |
+| Failure | If no emulator is found, `launch_game` returns the reason and the toast shows it. Nothing is guessed |
+| Artwork | The same SteamGridDB pipeline. SGDB keys games by title rather than by platform, so Switch releases resolve through the same search as PC ports — no second database. (ScreenScraper and TheGamesDB are noticeably weaker for modern Switch art) |
+| Shelf | Identical. A ROM row carries a `switch` stamp in the import sheet and a *Platform: Switch* fact in its record |
+
+```jsonc
+// %APPDATA%\app.piratelink.launcher\config.json
+{
+  "steamgriddb_api_key": "<key>",
+  "ryujinx_path": "D:\\ryujinx-stable-1.3.3-windows_x64\\Ryujinx.exe"
+}
+```
+
+`ryujinx_path` is optional; forks (Ryubing and friends) work the same way — point it
+at whichever `Ryujinx.exe` you actually run.
 
 ## What is deliberately *not* in the box
 
@@ -135,9 +161,14 @@ Run and passing:
 ```
 npm run check      -> 0 errors, 0 warnings
 npm run build      -> 301 KB dist
-cargo test         -> 41 passed, 2 ignored (live)
+cargo test --release --lib -> 53 passed, 2 ignored (live)
 npx tauri build --no-bundle -> target/release/piratelink.exe
 ```
+
+`--release` because this sandbox refuses to load the *debug* test binary
+(`STATUS_ENTRYPOINT_NOT_FOUND`), and it also denies `%TEMP%` writes from spawned
+binaries, so the suite runs with `TEMP` pointed inside `target\testtmp`. Neither is
+a property of the code: the same tests pass unchanged on a normal desktop.
 
 Two build-level traps worth recording:
 
@@ -185,14 +216,15 @@ src/
     audio.ts              sprite loader, <audio> + Web Audio engines
     input.ts              keyboard + gamepad -> one Action stream
     spring.svelte.ts      ~50-line critically-damped spring
-    components/           Backdrop, TopBar, Carousel, DetailOverlay, HintBar, Toast,
-                          EmptyState, ImportSheet
+    components/           Backdrop, TopBar, Carousel, DetailOverlay, ArtSheet, HintBar,
+                          Toast, EmptyState, ImportSheet
 src-tauri/
   src/db.rs               SQLite schema, migrations, queries
-  src/scanner.rs          executable walk, scoring, title cleanup
-  src/sgdb.rs             SteamGridDB client and match confidence
+  src/scanner.rs          executable walk, scoring, title cleanup, ROM recognition
+  src/emulator.rs         Ryujinx discovery (config, known paths, drive scan) and launch
+  src/sgdb.rs             SteamGridDB client, match confidence, asset picking
   src/artwork.rs          decode / downscale / re-encode to WebP
-  src/config.rs           app data dir + API key
+  src/config.rs           app data dir, API key, emulator path
   src/lib.rs              Tauri commands, app state, command log
   tauri.conf.json         frameless window, CSP, asset protocol, bundle config
   capabilities/           window-control and dialog permissions
@@ -230,32 +262,32 @@ Two details worth carrying into Phase 4:
 
 ## Phase 2 — library
 
-Wired end to end: pick `.exe` -> confirm title -> fetch -> shelf.
+Wired end to end: pick `.exe` or Switch dump -> confirm title -> fetch -> shelf.
 
 | Piece | File | Notes |
 | --- | --- | --- |
-| SQLite library | `db.rs` | `library.db` under the app data dir, WAL, `user_version` migrations |
-| Title from the install folder | `scanner.rs` | `title_for_exe` walks up past `Game` / `bin` / `Win64` and strips release noise; the filename is never used as a title |
+| SQLite library | `db.rs` | `library.db` under the app data dir, WAL, `user_version` migrations; `platform` added by a v1→v2 migration |
+| Title from the install folder | `scanner.rs` | `title_for_exe` walks up past `Game` / `bin` / `Win64` and strips release noise; the filename is never used as a title. `title_for_rom` does the opposite: the dump's filename *is* the title, so tags are stripped |
 | SteamGridDB | `sgdb.rs` | Bearer auth, tolerant parsing, 429 retry, 125 ms spacing |
-| Artwork | `artwork.rs` | Decode, downscale to a 600 px ceiling, re-encode WebP (JPEG/PNG fallback) |
-| UI | `src/lib/library.ts`, `ImportSheet.svelte` | One module owns the invoke layer; the sheet is a choose -> review -> add flow with an editable title per file |
+| Artwork | `artwork.rs` | Decode, downscale to a 600 px cover / 3840 px hero ceiling, re-encode WebP (JPEG/PNG fallback) |
+| UI | `src/lib/library.ts`, `ImportSheet.svelte`, `ArtSheet.svelte` | One module owns the invoke layer; import is choose -> review -> add with an editable title per file, and `ArtSheet` is the manual picker |
 
 The scanner still exists in `scanner.rs` (depth-limited walk, scoring, reasons) but
-the UI no longer calls it: picking the executable is the judgement the scanner was
+the UI no longer calls it: picking the file is the judgement the scanner was
 guessing at, and it costs the user one click instead of a confirmation screen.
 
 Set the API key once (outside the repo, never committed):
 
 ```powershell
 # %APPDATA%\app.piratelink.launcher\config.json
-{ "steamgriddb_api_key": "<your key>" }
+{ "steamgriddb_api_key": "<your key>", "ryujinx_path": "<optional>\\Ryujinx.exe" }
 ```
 
-Tests: **41 unit + 2 live**. The live tests are ignored by default so the suite
+Tests: **53 unit + 2 live**. The live tests are ignored by default so the suite
 stays offline:
 
 ```powershell
-cargo test                                     # 41 passed
+cargo test                                     # 53 passed
 $env:PIRATELINK_SGDB_KEY = "..."
 cargo test --lib -- --ignored                  # 2 passed (real API, ~5 s)
 ```
@@ -290,7 +322,28 @@ is wrong.
 
 If a cover is wrong: fix the title in the sheet before adding — the SteamGridDB
 search uses the field, not the filename. Afterwards, open the game and use
-**Refresh artwork**.
+**Refresh artwork** to re-run the lookup, or **Change art** to choose by hand.
+
+### Change art
+
+The automatic matcher is deliberately strict, which leaves two cases it cannot
+serve: games SteamGridDB spells differently, and games whose art the user simply
+prefers differently. **Change art** on a game's record covers both:
+
+1. The sheet opens on a SteamGridDB search for the title and loads the first hit.
+2. Click another result when the spelling differs. `FC 26` is listed as
+   `EA SPORTS FCT 26` — close enough for a human, not for `best_match`, which must
+   refuse rather than risk the wrong cover.
+3. Click any cover or hero to apply it. Nothing else changes: the asset is
+   downloaded, downscaled to the same ceilings, re-encoded to WebP in the same
+   cache, and the chosen SteamGridDB id is stored on the row so a later
+   **Refresh artwork** starts from the right entry.
+
+Cover and hero are applied independently, so replacing a cover never discards a
+hero chosen earlier. The picker marks what it applied with an **in use** stamp for
+the session, and cached art is requested with a `?v=` cache-buster — the asset
+protocol reads only the path, and without it the webview would keep showing the
+previous bitmap after an art change.
 
 ### What the live API actually does
 
@@ -316,19 +369,25 @@ the only trace.
 
 | Log shows | Means |
 | --- | --- |
-| `inspect_executable: ... -> "Title"` | the title that will be sent to SteamGridDB — the first thing to check when a cover comes back wrong |
-| `inspect_executable: not an .exe` | the picked path was not an executable; the sheet shows the same message |
+| `inspect_file: ... -> "Title"` | the title that will be sent to SteamGridDB — the first thing to check when a cover comes back wrong |
+| `inspect_file: not a game file` | the picked path was neither an `.exe` nor a `.nsp`/`.xci`/`.nro`; the sheet shows the same message |
+| `apply_artwork: <id> <- sgdb <id> cover ... hero ...` | a manual choice was written to the cache |
+| `launch_game: <title> -> <emulator> <rom>` | a Switch title was handed to Ryujinx |
+| `launch_game: no emulator for ...` | no `ryujinx_path`, no known install, and the drive scan found nothing; the toast carries the full message |
 | nothing after picking a file | the Windows dialog returned nothing (you cancelled), so nothing was inspected |
 
-An import that fails (the `.exe` was deleted between picking and adding, the
-database is locked) is reported in the sheet, not the log.
+An import that fails (the file was deleted between picking and adding, the database
+is locked) is reported in the sheet, not the log.
 
 ## Security and privacy
 
 - **No telemetry, no update pings.** The only network traffic is SteamGridDB when
-  you add a game.
+  you add a game or open the art picker.
 - **CSP** is set in `tauri.conf.json` (`default-src 'self'`, inline styles only,
-  `blob:` allowed for audio and images).
+  `blob:` allowed for audio and images). `img-src` additionally allows
+  `https://*.steamgriddb.com`, because the picker lays out CDN thumbnails before
+  anything is downloaded; `connect-src` stays `'self'`, so the webview cannot make
+  arbitrary requests.
 - **`launch_game` takes a game id**, not a path: it reads the executable from the
   database, so the webview can request game N but cannot name an arbitrary `.exe`.
 - **The API key stays out of the webview.** It lives in `config.json` under the app
@@ -342,7 +401,7 @@ database is locked) is reported in the sheet, not the log.
 
 - **Phase 1 — Shell & audio** ✅
 - **Phase 2 — Library & metadata** ✅ SQLite, scanner, SteamGridDB, artwork cache,
-  import flow, asset protocol
+  import flow, asset protocol, Switch ROMs via Ryujinx, manual art picker
 - **Memory pass** — next: re-measure against a build, then work from the 461 MB
   baseline toward the 200 MB target
 - **UI pass** ✅ catalogue layout: no blur, no glow, no pills; art carries the colour

@@ -13,7 +13,7 @@
   import Toast from "./lib/components/Toast.svelte";
   import EmptyState from "./lib/components/EmptyState.svelte";
   import ImportSheet from "./lib/components/ImportSheet.svelte";
-
+  import ArtSheet from "./lib/components/ArtSheet.svelte";
   let index = $state(0);
   let overlay = $state(false);
   let muted = $state(false);
@@ -31,6 +31,7 @@
   let loading = $state(true);
   let loadError = $state("");
   let importOpen = $state(false);
+  let artOpen = $state(false);
 
   const current = $derived(games[index] ?? null);
   const accent = $derived(current?.accent ?? "#eef0f4");
@@ -93,6 +94,7 @@
   function closeDetails() {
     if (!overlay) return;
     overlay = false;
+    artOpen = false;
     audio.play("back");
   }
 
@@ -149,6 +151,13 @@
     // The import sheet owns input while it is up.
     if (importOpen) {
       if (action === "back") importOpen = false;
+      if (action === "mute") muted = audio.toggleMuted();
+      return;
+    }
+
+    // ...and so does the artwork picker, which sits above the details page.
+    if (artOpen) {
+      if (action === "back") artOpen = false;
       if (action === "mute") muted = audio.toggleMuted();
       return;
     }
@@ -327,9 +336,24 @@
       onClose={closeDetails}
       onPlay={launch}
       onRefreshArt={() => refreshArtwork(current)}
+      onChangeArt={() => (artOpen = true)}
       onRemove={() => removeEntry(current)}
       {device}
       {family}
+    />
+
+    <ArtSheet
+      open={artOpen}
+      game={current}
+      {canFetchArt}
+      onClose={() => (artOpen = false)}
+      onApplied={(slot) => {
+        pushToast(
+          slot === "cover" ? "Cover updated" : "Backdrop updated",
+          current.title,
+        );
+        void reload();
+      }}
     />
   {/if}
 
@@ -544,6 +568,8 @@
   .strip {
     grid-column: 1 / -1;
     grid-row: 2;
+    /* The shelf bleeds to the window edge; only the left gutter is a margin. */
+    margin-right: calc(-1 * var(--gutter));
   }
 
   /* --- readouts ----------------------------------------------------------- */

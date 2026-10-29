@@ -10,6 +10,7 @@
     onClose,
     onPlay,
     onRefreshArt,
+    onChangeArt,
     onRemove,
     device = "keyboard",
     family = "xbox",
@@ -19,6 +20,7 @@
     onClose: () => void;
     onPlay: () => void;
     onRefreshArt?: () => void;
+    onChangeArt?: () => void;
     onRemove?: () => void;
     device?: Device;
     family?: PadFamily;
@@ -76,6 +78,12 @@
               <dt>Last played</dt>
               <dd>{lastPlayed(game.lastPlayed)}</dd>
             </div>
+            {#if game.platform === "switch"}
+              <div>
+                <dt>Platform</dt>
+                <dd>Switch</dd>
+              </div>
+            {/if}
             {#if game.achievements.total > 0}
               <div>
                 <dt>Achievements</dt>
@@ -101,6 +109,11 @@
 
             <span class="spacer"></span>
 
+            {#if onChangeArt}
+              <button class="quiet" onclick={onChangeArt} title="Pick a different cover or hero from SteamGridDB">
+                Change art
+              </button>
+            {/if}
             {#if onRefreshArt}
               <button class="quiet" onclick={onRefreshArt} title="Re-run the SteamGridDB lookup">
                 Refresh artwork

@@ -394,15 +394,7 @@ mod match_tests {
 /// relevance, so the first acceptable entry at a given size *is* the best one.
 /// Tag filtering stays, because tagged artwork can still appear at the front.
 pub fn pick_best(assets: &[Asset]) -> Option<&Asset> {
-    let safe: Vec<&Asset> = assets
-        .iter()
-        .filter(|a| {
-            !a.tags.iter().any(|t| {
-                let t = t.to_lowercase();
-                t.contains("nsfw") || t.contains("epilepsy") || t.contains("humor")
-            })
-        })
-        .collect();
+    let safe: Vec<&Asset> = assets.iter().filter(|a| is_safe(a)).collect();
 
     // Tagged artwork outranks nothing: fall back to the full list only when every
     // candidate is tagged.
@@ -417,6 +409,18 @@ pub fn pick_best(assets: &[Asset]) -> Option<&Asset> {
     // not stretch a 1080p copy over a 1440p window while a 4K one is on offer.
     let largest = pool.iter().map(|a| a.area()).max()?;
     pool.into_iter().find(|a| a.area() == largest)
+}
+
+/// Whether an asset may be shown at all.
+///
+/// The same veto applies to the automatic pick and to the manual picker: a tag
+/// that disqualifies art from being chosen automatically also disqualifies it
+/// from being offered, or the picker becomes a way around the filter.
+pub fn is_safe(asset: &Asset) -> bool {
+    !asset.tags.iter().any(|t| {
+        let t = t.to_lowercase();
+        t.contains("nsfw") || t.contains("epilepsy") || t.contains("humor")
+    })
 }
 
 /// Percent-encodes everything outside the unreserved set, which is what a path

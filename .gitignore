@@ -2,6 +2,9 @@ node_modules/
 dist/
 src-tauri/target/
 src-tauri/gen/
+
+# Scratch dir for `cargo test` when %TEMP% is not writable (see README).
+/target/
 .DS_Store
 *.log
 

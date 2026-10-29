@@ -190,6 +190,34 @@ pub fn title_for_exe(exe: &Path) -> String {
     clean_title(&title_folder(exe).unwrap_or_default())
 }
 
+/// ROM extensions the Ryujinx family opens directly. `.nro` is homebrew.
+pub const ROM_EXTENSIONS: &[&str] = &["nsp", "xci", "nro"];
+
+/// True when `path` is a console ROM rather than a Windows executable.
+pub fn is_rom(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ROM_EXTENSIONS.iter().any(|known| ext.eq_ignore_ascii_case(known)))
+}
+
+/// Best guess at a title for a ROM.
+///
+/// A console dump is named after the game and then tagged with ids, versions and
+/// region: `Mario Kart 8 Deluxe [0100152000022000][v0].nsp`. Unlike an
+/// executable, the *filename* is the only title the file carries, so it is
+/// cleaned exactly the way a release folder is. The folder is not consulted:
+/// Switch libraries keep every dump in one directory.
+pub fn title_for_rom(rom: &Path) -> String {
+    let stem = rom
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if stem.trim().is_empty() {
+        return String::new();
+    }
+    clean_title(&stem)
+}
+
 /// Walks up from the executable until it finds a folder that could be a game name.
 fn title_folder(exe: &Path) -> Option<String> {
     let mut current = exe.parent()?;
@@ -473,6 +501,35 @@ mod tests {
         for (path, expected) in cases {
             assert_eq!(title_for_exe(Path::new(path)), expected, "for {path}");
         }
+    }
+
+    #[test]
+    fn title_for_rom_cleans_dump_tags_from_the_filename() {
+        let cases = [
+            (
+                r"D:\Switch\Mario Kart 8 Deluxe [0100152000022000][v0].nsp",
+                "Mario Kart 8 Deluxe",
+            ),
+            (
+                r"D:\Switch\The Legend of Zelda - Tears of the Kingdom [0100F2C0115B6000][v65536].xci",
+                "The Legend of Zelda Tears of the Kingdom",
+            ),
+            (r"D:\Switch\Hades.nsp", "Hades"),
+            (r"D:\Switch\hbmenu.nro", "hbmenu"),
+        ];
+
+        for (path, expected) in cases {
+            assert_eq!(title_for_rom(Path::new(path)), expected, "for {path}");
+        }
+    }
+
+    #[test]
+    fn rom_extensions_are_recognised_case_insensitively() {
+        assert!(is_rom(Path::new(r"D:\Switch\game.NSP")));
+        assert!(is_rom(Path::new(r"D:\Switch\game.xci")));
+        assert!(is_rom(Path::new(r"D:\Switch\game.nro")));
+        assert!(!is_rom(Path::new(r"D:\Games\game.exe")));
+        assert!(!is_rom(Path::new(r"D:\Switch\game.zip")));
     }
 
     #[test]

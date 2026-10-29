@@ -54,29 +54,39 @@
   const GAP_RATIO = 0.16;
 
   /**
-   * Six plates fill the row edge to edge, so the strip never ends in blank
-   * space on a wide window. The height term only takes over when the window is
-   * too short for a 3:2 plate.
+   * Mirrors `--gutter` in app.css: the rail, the title and the first plate share
+   * this left edge.
+   */
+  const GUTTER = 56;
+
+  /**
+   * Six plates fill the row, and the row *bleeds* off the right edge instead of
+   * stopping at a matching margin: the last plate runs to the window edge, so a
+   * wide window never shows a strip of empty background after the shelf. The
+   * height term only takes over when the window is too short for a 3:2 plate.
    */
   const cardW = $derived.by(() => {
     if (!games.length) return 120;
-    const content = viewport - 112;
-    const widthFill = content / (slots + GAP_RATIO * (slots - 1));
-    const heightCap = (viewportH - 430) / 1.5;
-    const want = Math.min(widthFill, heightCap);
-    // Round the gap down, then check the real numbers: a rounded-up gap is
-    // enough to push the last plate past the gutter and drop it from the row.
-    const gap = Math.floor(want * GAP_RATIO);
+    const content = viewport - GUTTER;
+    const ideal = content / (slots + GAP_RATIO * (slots - 1));
+    const gap = Math.floor(ideal * GAP_RATIO);
+    // Round the gap down, then spend the leftover pixels on the plates: the row
+    // must end at the window edge, not a few pixels short of it.
     const fit = (content - (slots - 1) * gap) / slots;
-    return Math.round(Math.max(104, Math.min(want, fit)));
+    const heightCap = (viewportH - 430) / 1.5;
+    return Math.round(Math.max(104, Math.min(fit, heightCap)));
   });
   const cardH = $derived(Math.round(cardW * 1.5));
   const gap = $derived(Math.floor(cardW * GAP_RATIO));
   const pitch = $derived(cardW + gap);
 
-  /** Last slot that is still inside the right gutter. */
+  /**
+   * Any plate whose left edge is still inside the window gets rendered, so a
+   * short window that shrinks the plates fills the row with a clipped plate
+   * instead of closing in background. Purely off-screen slots are skipped.
+   */
   const maxD = $derived(
-    Math.min(ring.length / 2 - 0.05, (viewport - 112 - cardW) / pitch + 0.02),
+    Math.min(ring.length / 2 - 0.05, (viewport - GUTTER) / pitch),
   );
 
   /** Unbounded virtual position of the selection. */

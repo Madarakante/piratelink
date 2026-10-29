@@ -12,12 +12,17 @@ use serde::{Deserialize, Serialize};
 pub struct FileConfig {
     #[serde(default)]
     pub steamgriddb_api_key: String,
+    /// Optional path to the Switch emulator. Empty means "find it".
+    #[serde(default)]
+    pub ryujinx_path: String,
 }
 
 pub struct Config {
     pub data_dir: PathBuf,
     pub cache_dir: PathBuf,
     pub api_key: String,
+    /// Configured emulator, if the file names one.
+    pub ryujinx: Option<PathBuf>,
 }
 
 impl Config {
@@ -29,16 +34,26 @@ impl Config {
     /// environment (`cargo test` with the key exported must not change behaviour).
     pub fn load_with_env(data_dir: PathBuf, env_key: Option<String>) -> Self {
         let cache_dir = data_dir.join("cache");
+        let file = read_file(&data_dir).unwrap_or_default();
 
         let api_key = env_key
             .filter(|k| !k.trim().is_empty())
-            .or_else(|| read_key(&data_dir))
+            .or_else(|| {
+                let key = file.steamgriddb_api_key.trim().to_string();
+                (!key.is_empty()).then_some(key)
+            })
             .unwrap_or_default();
+
+        let ryujinx = {
+            let path = file.ryujinx_path.trim();
+            (!path.is_empty()).then(|| PathBuf::from(path))
+        };
 
         Self {
             data_dir,
             cache_dir,
             api_key,
+            ryujinx,
         }
     }
 
@@ -47,11 +62,9 @@ impl Config {
     }
 }
 
-fn read_key(data_dir: &Path) -> Option<String> {
+fn read_file(data_dir: &Path) -> Option<FileConfig> {
     let text = std::fs::read_to_string(data_dir.join("config.json")).ok()?;
-    let parsed: FileConfig = serde_json::from_str(&text).ok()?;
-    let key = parsed.steamgriddb_api_key.trim().to_string();
-    (!key.is_empty()).then_some(key)
+    serde_json::from_str(&text).ok()
 }
 
 #[cfg(test)]
@@ -70,6 +83,37 @@ mod tests {
         let config = Config::load_with_env(tmp.path().to_path_buf(), None);
         assert_eq!(config.api_key, "abc123");
         assert_eq!(config.art_dir(), tmp.path().join("cache").join("art"));
+    }
+
+    #[test]
+    fn reads_emulator_path_from_config_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("config.json"),
+            r#"{"steamgriddb_api_key":"abc123","ryujinx_path":"D:\\ryujinx-stable-1.3.3-windows_x64\\Ryujinx.exe"}"#,
+        )
+        .unwrap();
+
+        let config = Config::load_with_env(tmp.path().to_path_buf(), None);
+        assert_eq!(
+            config.ryujinx.as_deref(),
+            Some(Path::new(
+                r"D:\ryujinx-stable-1.3.3-windows_x64\Ryujinx.exe"
+            ))
+        );
+    }
+
+    #[test]
+    fn blank_emulator_path_means_auto_detect() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("config.json"),
+            r#"{"steamgriddb_api_key":"abc123","ryujinx_path":"   "}"#,
+        )
+        .unwrap();
+
+        let config = Config::load_with_env(tmp.path().to_path_buf(), None);
+        assert!(config.ryujinx.is_none());
     }
 
     #[test]

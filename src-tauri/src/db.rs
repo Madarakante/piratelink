@@ -21,7 +21,7 @@ pub enum DbError {
 }
 
 /// Bump when the schema changes; the migration block is applied in order.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Root {
@@ -36,6 +36,8 @@ pub struct Game {
     pub title: String,
     pub executable: String,
     pub install_dir: String,
+    /// `"pc"` for a Windows executable, `"switch"` for a ROM an emulator opens.
+    pub platform: String,
     pub sgdb_id: Option<i64>,
     pub cover_path: Option<String>,
     pub hero_path: Option<String>,
@@ -51,6 +53,7 @@ pub struct NewGame {
     pub title: String,
     pub executable: String,
     pub install_dir: String,
+    pub platform: String,
 }
 
 pub struct Db {
@@ -114,6 +117,16 @@ impl Db {
                 CREATE INDEX IF NOT EXISTS idx_games_sort ON games(sort_title);
                 "#,
             )?;
+        }
+
+        if version < 2 {
+            // A row has to say which kind of file `executable` points at, because
+            // a Switch ROM is handed to an emulator instead of being started.
+            // Every row that already exists is a Windows executable.
+            conn.execute_batch("ALTER TABLE games ADD COLUMN platform TEXT NOT NULL DEFAULT 'pc';")?;
+        }
+
+        if version < SCHEMA_VERSION {
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         }
 
@@ -184,7 +197,7 @@ impl Db {
     pub fn games(&self) -> Result<Vec<Game>> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, title, executable, install_dir, sgdb_id, cover_path, hero_path,
+            "SELECT id, title, executable, install_dir, platform, sgdb_id, cover_path, hero_path,
                     logo_path, accent, playtime_minutes, last_played_at, added_at
              FROM games ORDER BY sort_title, title",
         )?;
@@ -195,14 +208,15 @@ impl Db {
                     title: row.get(1)?,
                     executable: row.get(2)?,
                     install_dir: row.get(3)?,
-                    sgdb_id: row.get(4)?,
-                    cover_path: row.get(5)?,
-                    hero_path: row.get(6)?,
-                    logo_path: row.get(7)?,
-                    accent: row.get(8)?,
-                    playtime_minutes: row.get(9)?,
-                    last_played_at: row.get(10)?,
-                    added_at: row.get(11)?,
+                    platform: row.get(4)?,
+                    sgdb_id: row.get(5)?,
+                    cover_path: row.get(6)?,
+                    hero_path: row.get(7)?,
+                    logo_path: row.get(8)?,
+                    accent: row.get(9)?,
+                    playtime_minutes: row.get(10)?,
+                    last_played_at: row.get(11)?,
+                    added_at: row.get(12)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -223,19 +237,20 @@ impl Db {
 
         let conn = self.lock();
         conn.execute(
-            "INSERT INTO games (title, sort_title, executable, install_dir)
-             VALUES (?1, ?2, ?3, ?4)
+            "INSERT INTO games (title, sort_title, executable, install_dir, platform)
+             VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(executable) DO UPDATE SET title = excluded.title, sort_title = excluded.sort_title",
             params![
                 new.title,
                 sort_key(&new.title),
                 new.executable,
-                new.install_dir
+                new.install_dir,
+                new.platform
             ],
         )?;
 
         conn.query_row(
-            "SELECT id, title, executable, install_dir, sgdb_id, cover_path, hero_path,
+            "SELECT id, title, executable, install_dir, platform, sgdb_id, cover_path, hero_path,
                     logo_path, accent, playtime_minutes, last_played_at, added_at
              FROM games WHERE executable = ?1",
             params![new.executable],
@@ -245,14 +260,15 @@ impl Db {
                     title: row.get(1)?,
                     executable: row.get(2)?,
                     install_dir: row.get(3)?,
-                    sgdb_id: row.get(4)?,
-                    cover_path: row.get(5)?,
-                    hero_path: row.get(6)?,
-                    logo_path: row.get(7)?,
-                    accent: row.get(8)?,
-                    playtime_minutes: row.get(9)?,
-                    last_played_at: row.get(10)?,
-                    added_at: row.get(11)?,
+                    platform: row.get(4)?,
+                    sgdb_id: row.get(5)?,
+                    cover_path: row.get(6)?,
+                    hero_path: row.get(7)?,
+                    logo_path: row.get(8)?,
+                    accent: row.get(9)?,
+                    playtime_minutes: row.get(10)?,
+                    last_played_at: row.get(11)?,
+                    added_at: row.get(12)?,
                 })
             },
         )
@@ -342,6 +358,64 @@ mod tests {
     }
 
     #[test]
+    fn migration_adds_platform_to_an_existing_library() {
+        // A version-1 database has no `platform` column. Opening it must keep the
+        // rows and read them as Windows games rather than failing.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                r#"
+                CREATE TABLE games (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title            TEXT NOT NULL,
+                    sort_title       TEXT NOT NULL,
+                    executable       TEXT NOT NULL UNIQUE,
+                    install_dir      TEXT NOT NULL,
+                    sgdb_id          INTEGER,
+                    cover_path       TEXT,
+                    hero_path        TEXT,
+                    logo_path        TEXT,
+                    accent           TEXT,
+                    playtime_minutes INTEGER NOT NULL DEFAULT 0,
+                    last_played_at   TEXT,
+                    added_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+                );
+                INSERT INTO games (title, sort_title, executable, install_dir)
+                VALUES ('Hades', 'hades', 'C:/games/hades.exe', 'C:/games');
+                PRAGMA user_version = 1;
+                "#,
+            )
+            .unwrap();
+        }
+
+        let db = Db::open(&path).unwrap();
+        let games = db.games().unwrap();
+        assert_eq!(games.len(), 1);
+        assert_eq!(games[0].platform, "pc", "existing rows are Windows games");
+    }
+
+    #[test]
+    fn switch_roms_keep_their_platform() {
+        let db = db();
+        let dir = tempfile::tempdir().unwrap();
+        let rom = fake_exe(dir.path(), "Mario Kart 8 Deluxe [0100152000022000][v0].nsp");
+
+        let game = db
+            .add_game(&NewGame {
+                title: "Mario Kart 8 Deluxe".into(),
+                executable: rom.to_string_lossy().to_string(),
+                install_dir: dir.path().to_string_lossy().to_string(),
+                platform: "switch".into(),
+            })
+            .unwrap();
+
+        assert_eq!(game.platform, "switch");
+        assert_eq!(db.game(game.id).unwrap().unwrap().platform, "switch");
+    }
+
+    #[test]
     fn roots_round_trip_and_dedupe() {
         let db = db();
         let dir = tempfile::tempdir().unwrap();
@@ -369,6 +443,7 @@ mod tests {
                 title: "Nope".into(),
                 executable: "C:/nope/game.exe".into(),
                 install_dir: "C:/nope".into(),
+                platform: "pc".into(),
             })
             .unwrap_err();
         assert!(matches!(err, DbError::Invalid(_)));
@@ -384,6 +459,7 @@ mod tests {
             title: "Hades".into(),
             executable: exe.to_string_lossy().to_string(),
             install_dir: dir.path().to_string_lossy().to_string(),
+            platform: "pc".into(),
         };
         let first = db.add_game(&new).unwrap();
         let second = db.add_game(&new).unwrap();
@@ -402,6 +478,7 @@ mod tests {
                 title: "Sable Tide".into(),
                 executable: exe.to_string_lossy().to_string(),
                 install_dir: dir.path().to_string_lossy().to_string(),
+                platform: "pc".into(),
             })
             .unwrap();
 
@@ -429,6 +506,7 @@ mod tests {
                 title: "Emberfall".into(),
                 executable: exe.to_string_lossy().to_string(),
                 install_dir: dir.path().to_string_lossy().to_string(),
+                platform: "pc".into(),
             })
             .unwrap();
 

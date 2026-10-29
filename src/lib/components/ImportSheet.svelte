@@ -3,10 +3,10 @@
   import {
     addGame,
     fetchArtwork,
-    inspectExecutable,
+    inspectFile,
     isTauri,
-    pickExecutables,
-    type ExecutableInfo,
+    pickGameFiles,
+    type GameFileInfo,
   } from "../library";
 
   let {
@@ -22,9 +22,9 @@
   } = $props();
 
   type Step = "choose" | "review" | "importing" | "done";
-  /** `suggested` keeps the folder-derived name, so clearing the field cannot
-   *  fall back to the filename. */
-  type Entry = ExecutableInfo & { include: boolean; suggested: string };
+  /** `suggested` keeps the derived name, so clearing the field cannot fall back
+   *  to the filename. */
+  type Entry = GameFileInfo & { include: boolean; suggested: string };
 
   let step = $state<Step>("choose");
   let entries = $state<Entry[]>([]);
@@ -46,7 +46,7 @@
         ? "Step 3 — Add"
         : step === "done"
           ? "Complete"
-          : "Step 1 — Executable",
+          : "Step 1 — Game file",
   );
 
   function reset() {
@@ -77,7 +77,7 @@
     error = "";
     let paths: string[] = [];
     try {
-      paths = await pickExecutables();
+      paths = await pickGameFiles();
     } catch (err) {
       error = String(err);
       return;
@@ -88,7 +88,7 @@
     for (const path of paths) {
       if (entries.some((entry) => entry.path === path)) continue;
       try {
-        const info = await inspectExecutable(path);
+        const info = await inspectFile(path);
         fresh.push({ ...info, include: !info.already_in_library, suggested: info.title });
       } catch (err) {
         error = `${path} — ${err instanceof Error ? err.message : String(err)}`;
@@ -145,9 +145,12 @@
     onImported();
   }
 
+  /** A ROM is 8-20 GB, so megabytes stop being readable above a gigabyte. */
   function mb(bytes: number): string {
-    if (!bytes) return "—";
-    return `${Math.round(bytes / (1024 * 1024))} MB`;
+    if (!bytes) return "-";
+    const mb = bytes / (1024 * 1024);
+    if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
+    return `${Math.round(mb)} MB`;
   }
 </script>
 
@@ -180,12 +183,15 @@
 
         {#if step === "choose"}
           <p class="lead">
-            Point at the game's <code>.exe</code>. Filenames are often useless — <code>eldenring.exe</code>,
-            <code>hl2.exe</code>, <code>Cyberpunk2077.exe</code> — so the title is taken from the folder
-            the game is installed in, and you can correct it before it is added.
+            Point at the game's <code>.exe</code>, or at a Switch dump
+            (<code>.nsp</code>, <code>.xci</code>, <code>.nro</code>). Executable filenames are
+            often useless — <code>eldenring.exe</code>, <code>hl2.exe</code>,
+            <code>Cyberpunk2077.exe</code> — so the title comes from the folder the game is
+            installed in; a ROM is named after the game, so its filename is cleaned of ids
+            instead. Either way you can correct it before it is added.
           </p>
           <div class="row">
-            <button class="btn" onclick={chooseFiles}>Choose executable</button>
+            <button class="btn" onclick={chooseFiles}>Choose game file</button>
             <span class="note">
               {#if isTauri}
                 Pick one, or several at once.
@@ -230,6 +236,7 @@
                   <span class="sub num">{entry.path}</span>
                   <span class="reasons num">
                     {mb(entry.size_bytes)}
+                    {#if entry.platform === "switch"}<em class="switch">switch</em>{/if}
                     {#if entry.already_in_library}<em>already added</em>{/if}
                   </span>
                 </div>
@@ -589,6 +596,13 @@
     font-weight: 500;
     letter-spacing: 0.12em;
     text-transform: uppercase;
+  }
+
+  /* A boxed label, like a format stamp on a spine — not a coloured chip. */
+  .reasons em.switch {
+    padding: 1px 4px 0;
+    border: 1px solid var(--line);
+    color: var(--ink-faint);
   }
 
   .progress {

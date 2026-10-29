@@ -1,5 +1,5 @@
 /**
- * UI audio — one sprite file, two playback engines.
+ * UI audio - one sprite file, two playback engines.
  *
  * `element` (default, always available): one pooled <audio> element per cue,
  * seeking into the shared sprite with `currentTime`. Starts instantly, no decode.

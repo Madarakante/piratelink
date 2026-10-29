@@ -15,6 +15,8 @@
   import ImportSheet from "./lib/components/ImportSheet.svelte";
   import ArtSheet from "./lib/components/ArtSheet.svelte";
   import SettingsSheet from "./lib/components/SettingsSheet.svelte";
+  import RoomSheet from "./lib/components/RoomSheet.svelte";
+  import type { Room } from "./lib/library";
   let index = $state(0);
   let overlay = $state(false);
   let muted = $state(false);
@@ -34,6 +36,8 @@
   let importOpen = $state(false);
   let artOpen = $state(false);
   let settingsOpen = $state(false);
+  let roomOpen = $state(false);
+  let room = $state<Room | null>(null);
   let settings = $state<Settings | null>(null);
 
   const current = $derived(games[index] ?? null);
@@ -55,7 +59,7 @@
 
   /** "Played yesterday" reads as noise under a label already saying Played. */
   function lastPlayedLabel(value: string): string {
-    if (!value) return "—";
+    if (!value) return "-";
     if (/^never/i.test(value)) return "Never";
     return value.replace(/^played\s*/i, "");
   }
@@ -150,7 +154,7 @@
     audio.play("select", 0.95);
 
     if (game.dbId == null) {
-      pushToast("Demo entry", `${game.title} is sample data — add a folder to build a real library.`);
+      pushToast("Demo entry", `${game.title} is sample data - add a folder to build a real library.`);
       return;
     }
 
@@ -308,6 +312,17 @@
     onToggleMute={toggleMute}
     onAdd={() => (importOpen = true)}
     onSettings={() => (settingsOpen = true)}
+    onRoom={() => (roomOpen = true)}
+  />
+
+  <RoomSheet
+    open={roomOpen}
+    game={current?.title ?? "PirateLink room"}
+    onClose={() => (roomOpen = false)}
+    onStarted={(next) => {
+      room = next;
+      pushToast("Room ready", `${next.host_address}:${next.port}`);
+    }}
   />
 
   <main class="stage" class:dim={overlay}>
@@ -360,7 +375,7 @@
         <dl class="facts" in:fade={{ duration: 260 }}>
           <div>
             <dt>Playtime</dt>
-            <dd>{current.playtimeMinutes > 0 ? credits(current.playtimeMinutes) : "—"}</dd>
+            <dd>{current.playtimeMinutes > 0 ? credits(current.playtimeMinutes) : "-"}</dd>
           </div>
           {#if current.achievements.total > 0}
             <div>

@@ -82,7 +82,7 @@
 
   A printed index, not a control panel: one column of hairline rows, the name on
   the left, the control on the right, and the path worth checking printed under
-  the row in monospace. Everything here writes to config.json immediately — a
+  the row in monospace. Everything here writes to config.json immediately - a
   Save button that could be forgotten is worse than a write per click.
 -->
 {#if open}
@@ -100,7 +100,7 @@
           PirateLink {settings.version} · {settings.games} titles
         {/if}
       </span>
-      <button class="quiet" onclick={onClose}>Close — Esc</button>
+      <button class="quiet" onclick={onClose}>Close - Esc</button>
     </header>
 
     <div class="body">
@@ -174,7 +174,7 @@
             <span class="name">Cached artwork</span>
             <div class="ctl">
               <span class="value num">
-                {settings ? `${settings.art_files} files · ${mb(settings.art_bytes)}` : "—"}
+                {settings ? `${settings.art_files} files · ${mb(settings.art_bytes)}` : "-"}
               </span>
               <div class="acts">
                 <button class="btn" disabled={!!refresh || !settings?.games} onclick={refreshAll}>
@@ -220,7 +220,7 @@
           </div>
           <p class="note">
             {#if settings?.ryujinx_found}
-              Found <code>{settings.ryujinx_found}</code> — ROMs open as
+              Found <code>{settings.ryujinx_found}</code> - ROMs open as
               <code>Ryujinx.exe "&lt;rom&gt;"</code>.
             {:else}
               No Ryujinx found. Choose its executable, or install it and use Auto.
@@ -280,7 +280,7 @@
             <div class="row tight">
               <span class="name">{entry.name}</span>
               <div class="ctl">
-                <span class="value path" title={entry.path}>{entry.path || "—"}</span>
+                <span class="value path" title={entry.path}>{entry.path || "-"}</span>
                 <div class="acts">
                   <button
                     class="quiet"

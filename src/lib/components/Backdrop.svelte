@@ -111,7 +111,7 @@
   /*
     Fit mode: the hero is printed at its own aspect ratio, the width of the window,
     so nothing is cropped. Valve's heroes are ~3.1:1 while a 16:9 window is ~1.6:1,
-    so covering the window would throw away half the picture — the mask ends it
+    so covering the window would throw away half the picture - the mask ends it
     softly instead of leaving a hard seam where the bitmap stops.
   */
   .backdrop[data-fit="fit"] .layer {
@@ -130,7 +130,7 @@
       linear-gradient(180deg, #0a0c11 0%, var(--bg-0) 100%);
   }
 
-  /* The per-game accent is used once, as a wide tint — not as a glow behind the
+  /* The per-game accent is used once, as a wide tint - not as a glow behind the
      selected card. */
   .tint {
     position: absolute;

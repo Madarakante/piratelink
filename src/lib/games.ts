@@ -32,7 +32,7 @@ export const demoLibrary: Game[] = [
   {
     id: "emberfall",
     title: "Emberfall",
-    subtitle: "Chapter II — The Long Dark",
+    subtitle: "Chapter II - The Long Dark",
     genre: "Action RPG",
     cover: "/art/cover-emberfall.webp",
     backdrop: "/art/bg-emberfall.webp",
@@ -46,7 +46,7 @@ export const demoLibrary: Game[] = [
   {
     id: "voidrunner",
     title: "Voidrunner",
-    subtitle: "Season 4 — Deep Signal",
+    subtitle: "Season 4 - Deep Signal",
     genre: "Roguelite",
     cover: "/art/cover-voidrunner.webp",
     backdrop: "/art/bg-voidrunner.webp",

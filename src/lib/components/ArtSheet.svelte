@@ -156,7 +156,7 @@
     <header>
       <span class="label">Artwork</span>
       <span class="target">{game.title}</span>
-      <button class="quiet" onclick={onClose}>Close — Esc</button>
+      <button class="quiet" onclick={onClose}>Close - Esc</button>
     </header>
 
     <div class="body">
@@ -181,7 +181,7 @@
             No SteamGridDB key. Add <code>steamgriddb_api_key</code> to
             <code>config.json</code> in the app data folder.
           {:else}
-            Pick the entry SteamGridDB has for the game — titles are not always spelled
+            Pick the entry SteamGridDB has for the game - titles are not always spelled
             the way the folder is.
           {/if}
         </p>

@@ -2,7 +2,7 @@
   let { onOpen }: { onOpen: () => void } = $props();
 
   const steps = [
-    "Pick the game's .exe — one file per game",
+    "Pick the game's .exe - one file per game",
     "PirateLink names it from the install folder, not the file name",
     "Fix the title if it guessed wrong, then add it and fetch the cover",
   ];
@@ -14,7 +14,7 @@
       <h2>Nothing on<br />the shelf</h2>
       <p class="lead">
         Point PirateLink at a game's executable. It reads the title from the folder the game is
-        installed in — a file name like <code>eldenring.exe</code> is not a name — and you can
+        installed in - a file name like <code>eldenring.exe</code> is not a name - and you can
         correct it before anything is added.
       </p>
 

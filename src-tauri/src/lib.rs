@@ -9,7 +9,10 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::OnceLock;
+use std::net::TcpListener;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::thread;
 
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
@@ -48,6 +51,37 @@ struct AppState {
     /// runtime; every reader takes a short lock and clones what it needs.
     config: std::sync::RwLock<Config>,
     sgdb: Sgdb,
+    room: Mutex<Option<RoomRuntime>>,
+}
+
+struct RoomRuntime {
+    token: String,
+    port: u16,
+    stop: Arc<AtomicBool>,
+}
+
+#[derive(Serialize)]
+struct RoomView {
+    token: String,
+    port: u16,
+    host_address: String,
+    network_id: String,
+    game: String,
+}
+
+#[derive(Deserialize)]
+struct StartRoom {
+    game: String,
+    network_id: String,
+    host_address: String,
+}
+
+#[derive(Serialize)]
+struct ZeroTierStatus {
+    network_id: Option<String>,
+    status: String,
+    address: Option<String>,
+    message: String,
 }
 
 impl AppState {
@@ -58,6 +92,166 @@ impl AppState {
 
 fn to_string_err<E: std::fmt::Display>(err: E) -> String {
     err.to_string()
+}
+
+fn room_token() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or_default();
+    format!("{:x}-{:x}", now, std::process::id())
+}
+
+#[tauri::command]
+fn detect_zerotier(network_id: Option<String>) -> Result<ZeroTierStatus, String> {
+    let cli = [
+        PathBuf::from(r"C:\Program Files (x86)\ZeroTier\One\zerotier-cli.bat"),
+        PathBuf::from(r"C:\Program Files\ZeroTier\One\zerotier-cli.bat"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+    .unwrap_or_else(|| PathBuf::from("zerotier-cli"));
+    let output = Command::new(&cli)
+        .args(["-j", "listnetworks"])
+        .output()
+        .map_err(|error| format!("could not run {}: {error}", cli.display()))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+
+    let networks: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("could not read ZeroTier response: {error}"))?;
+    let wanted = network_id.as_deref().map(str::trim).filter(|value| !value.is_empty());
+    let selected = networks
+        .as_array()
+        .and_then(|items| items.iter().find(|item| {
+            let matches_id = wanted.is_none_or(|id| item.get("nwid").and_then(|value| value.as_str()) == Some(id));
+            matches_id && item.get("status").and_then(|value| value.as_str()) == Some("OK")
+        }))
+        .or_else(|| networks.as_array().and_then(|items| items.first()));
+
+    let Some(network) = selected else {
+        return Ok(ZeroTierStatus {
+            network_id: None,
+            status: "NOT_FOUND".to_string(),
+            address: None,
+            message: "No ZeroTier networks are joined".to_string(),
+        });
+    };
+
+    let id = network.get("nwid").and_then(|value| value.as_str()).map(str::to_string);
+    let status = network
+        .get("status")
+        .and_then(|value| value.as_str())
+        .unwrap_or("UNKNOWN")
+        .to_string();
+    let address = network
+        .get("assignedAddresses")
+        .and_then(|value| value.as_array())
+        .and_then(|values| values.iter().find_map(|value| {
+            let address = value.as_str()?.split('/').next()?;
+            address.starts_with("10.").then(|| address.to_string())
+        }));
+    let message = if status == "OK" && address.is_some() {
+        "ZeroTier network is ready".to_string()
+    } else {
+        format!("ZeroTier network status: {status}")
+    };
+
+    Ok(ZeroTierStatus { network_id: id, status, address, message })
+}
+
+#[tauri::command]
+fn join_zerotier(network_id: String) -> Result<String, String> {
+    let network_id = network_id.trim();
+    if !network_id.chars().all(|ch| ch.is_ascii_hexdigit()) || network_id.len() != 16 {
+        return Err("ZeroTier network ID must be 16 hexadecimal characters".to_string());
+    }
+
+    let cli = [
+        PathBuf::from(r"C:\Program Files (x86)\ZeroTier\One\zerotier-cli.bat"),
+        PathBuf::from(r"C:\Program Files\ZeroTier\One\zerotier-cli.bat"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+    .unwrap_or_else(|| PathBuf::from("zerotier-cli.bat"));
+
+    let output = if cli.is_file() {
+        Command::new("cmd")
+            .args(["/C", cli.to_string_lossy().as_ref(), "join", network_id])
+            .output()
+    } else {
+        Command::new("zerotier-cli").args(["join", network_id]).output()
+    }
+    .map_err(|error| format!("could not run ZeroTier: {error}"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !output.status.success() {
+        return Err(if stderr.is_empty() { stdout } else { stderr });
+    }
+    Ok(if stdout.is_empty() { "ZeroTier join requested".to_string() } else { stdout })
+}
+
+#[tauri::command]
+fn start_room(request: StartRoom, state: tauri::State<'_, AppState>) -> Result<RoomView, String> {
+    let game = request.game.trim();
+    let network_id = request.network_id.trim();
+    let host_address = request.host_address.trim();
+    if game.is_empty() || network_id.is_empty() || host_address.is_empty() {
+        return Err("game, ZeroTier network ID, and host address are required".to_string());
+    }
+    if !network_id.chars().all(|ch| ch.is_ascii_hexdigit()) || network_id.len() != 16 {
+        return Err("ZeroTier network ID must be 16 hexadecimal characters".to_string());
+    }
+
+    let listener = TcpListener::bind("0.0.0.0:0").map_err(to_string_err)?;
+    listener.set_nonblocking(true).map_err(to_string_err)?;
+    let port = listener.local_addr().map_err(to_string_err)?.port();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_thread = Arc::clone(&stop);
+    thread::spawn(move || {
+        while !stop_thread.load(Ordering::Relaxed) {
+            match listener.accept() {
+                Ok((stream, address)) => {
+                    log_line(&format!("room: presence connection from {address}"));
+                    drop(stream);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Err(error) => {
+                    log_line(&format!("room: listener stopped: {error}"));
+                    break;
+                }
+            }
+        }
+    });
+
+    let token = room_token();
+    let view = RoomView {
+        token: token.clone(),
+        port,
+        host_address: host_address.to_string(),
+        network_id: network_id.to_string(),
+        game: game.to_string(),
+    };
+    let mut room = state.room.lock().unwrap_or_else(|error| error.into_inner());
+    if let Some(previous) = room.replace(RoomRuntime { token, port, stop }) {
+        previous.stop.store(true, Ordering::Relaxed);
+    }
+    log_line(&format!("room: started {} on {}:{}", game, host_address, port));
+    Ok(view)
+}
+
+#[tauri::command]
+fn stop_room(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let mut room = state.room.lock().unwrap_or_else(|error| error.into_inner());
+    if let Some(active) = room.take() {
+        active.stop.store(true, Ordering::Relaxed);
+        log_line(&format!("room: stopped {}:{}", active.token, active.port));
+    }
+    Ok(())
 }
 
 // -- library ---------------------------------------------------------------
@@ -321,7 +515,7 @@ async fn fetch_artwork(id: i64, state: tauri::State<'_, AppState>) -> Result<Art
     // artwork and telling the user why.
     let best = sgdb::best_match(&game.title, &matches).ok_or_else(|| {
         format!(
-            "no confident SteamGridDB match for \"{}\" ({} result{} searched) — artwork was left unchanged",
+            "no confident SteamGridDB match for \"{}\" ({} result{} searched) - artwork was left unchanged",
             game.title,
             matches.len(),
             if matches.len() == 1 { "" } else { "s" }
@@ -608,7 +802,7 @@ fn launch_rom(
     let emulator = emulator::find(configured, Some(rom)).ok_or_else(|| {
         log_line(&format!("launch_game: no emulator for {}", rom.display()));
         format!(
-            "no Switch emulator found for \"{}\" — put Ryujinx on PATH, install it in a \
+            "no Switch emulator found for \"{}\" - put Ryujinx on PATH, install it in a \
              standard location, or name its executable in config.json as \"ryujinx_path\"",
             game.title
         )
@@ -869,6 +1063,7 @@ pub fn run() {
                 db,
                 config: std::sync::RwLock::new(config),
                 sgdb,
+                room: Mutex::new(None),
             });
             Ok(())
         })
@@ -891,6 +1086,10 @@ pub fn run() {
             get_settings,
             save_settings,
             reveal_data,
+            detect_zerotier,
+            join_zerotier,
+            start_room,
+            stop_room,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PirateLink");

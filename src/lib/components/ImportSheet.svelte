@@ -41,12 +41,12 @@
 
   const stepLabel = $derived(
     step === "review"
-      ? "Step 2 — Review"
+      ? "Step 2 - Review"
       : step === "importing"
-        ? "Step 3 — Add"
+        ? "Step 3 - Add"
         : step === "done"
           ? "Complete"
-          : "Step 1 — Game file",
+          : "Step 1 - Game file",
   );
 
   function reset() {
@@ -68,7 +68,7 @@
 
   /**
    * Picking the .exe means the title has to come from somewhere, and the file
-   * name is usually the worst possible answer — `eldenring.exe` is not a game
+   * name is usually the worst possible answer - `eldenring.exe` is not a game
    * name. The backend names it after the install folder instead, and every entry
    * lands here as an editable field, so a bad guess costs a correction rather
    * than a wrong SteamGridDB match.
@@ -91,7 +91,7 @@
         const info = await inspectFile(path);
         fresh.push({ ...info, include: !info.already_in_library, suggested: info.title });
       } catch (err) {
-        error = `${path} — ${err instanceof Error ? err.message : String(err)}`;
+        error = `${path} - ${err instanceof Error ? err.message : String(err)}`;
       }
     }
 
@@ -127,7 +127,7 @@
         added += 1;
 
         if (canFetchArt) {
-          label = `${title} — artwork`;
+          label = `${title} - artwork`;
           try {
             await fetchArtwork(id);
           } catch {
@@ -136,7 +136,7 @@
           }
         }
       } catch (err) {
-        error = `${title} — ${err instanceof Error ? err.message : String(err)}`;
+        error = `${title} - ${err instanceof Error ? err.message : String(err)}`;
       }
       done += 1;
     }
@@ -185,8 +185,8 @@
           <p class="lead">
             Point at the game's <code>.exe</code>, or at a Switch dump
             (<code>.nsp</code>, <code>.xci</code>, <code>.nro</code>). Executable filenames are
-            often useless — <code>eldenring.exe</code>, <code>hl2.exe</code>,
-            <code>Cyberpunk2077.exe</code> — so the title comes from the folder the game is
+            often useless - <code>eldenring.exe</code>, <code>hl2.exe</code>,
+            <code>Cyberpunk2077.exe</code> - so the title comes from the folder the game is
             installed in; a ROM is named after the game, so its filename is cleaned of ids
             instead. Either way you can correct it before it is added.
           </p>
@@ -196,7 +196,7 @@
               {#if isTauri}
                 Pick one, or several at once.
               {:else}
-                Browser preview — these paths are demo data, so the dialog is simulated.
+                Browser preview - these paths are demo data, so the dialog is simulated.
                 Run the built app to pick real files.
               {/if}
             </span>
@@ -209,7 +209,7 @@
               </button>
               <span class="label">{chosen.length} of {selectable.length} selected</span>
             {:else}
-              <span class="label empty">Already in your library — nothing to add</span>
+              <span class="label empty">Already in your library - nothing to add</span>
             {/if}
           </div>
 
@@ -273,7 +273,7 @@
           <p class="lead">
             Added {added} {added === 1 ? "game" : "games"}.
             {#if artFailed > 0}
-              {artFailed} had no artwork found — they are still in your library.
+              {artFailed} had no artwork found - they are still in your library.
             {/if}
           </p>
           {#if !canFetchArt}
@@ -598,7 +598,7 @@
     text-transform: uppercase;
   }
 
-  /* A boxed label, like a format stamp on a spine — not a coloured chip. */
+  /* A boxed label, like a format stamp on a spine - not a coloured chip. */
   .reasons em.switch {
     padding: 1px 4px 0;
     border: 1px solid var(--line);

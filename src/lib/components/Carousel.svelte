@@ -32,7 +32,7 @@
    *
    * A ring of length L can only place plates within ±L/2 of the cursor, so a
    * short library is laid out twice (ringLen = 2n). Without that, a six-title
-   * library on a six-plate row can only fill half the row — which is exactly
+   * library on a six-plate row can only fill half the row - which is exactly
    * the void that showed up after the eleventh switch.
    */
   const ring = $derived.by(() => {

@@ -2,7 +2,7 @@
 //!
 //! Deliberately a *suggester*, not an auto-classifier: it ranks executables and
 //! explains why, and the UI asks the user to confirm. A launcher that silently
-//! decides "this file is a game" gets it wrong in both directions — it misses
+//! decides "this file is a game" gets it wrong in both directions - it misses
 //! non-Steam layouts and it happily matches redistributables.
 
 use std::collections::HashSet;

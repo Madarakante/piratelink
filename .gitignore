@@ -9,4 +9,5 @@ src-tauri/gen/
 *.log
 
 .tmp/
+.firecrawl/
 

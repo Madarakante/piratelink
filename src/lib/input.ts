@@ -10,9 +10,9 @@
 export type Action =
   | "prev"
   | "next"
-  | "open" // X / A — open the highlighted game
-  | "back" // Circle / B / Escape — close the overlay
-  | "play" // Square / X — launch directly from the shelf
+  | "open" // X / A - open the highlighted game
+  | "back" // Circle / B / Escape - close the overlay
+  | "play" // Square / X - launch directly from the shelf
   | "mute"
   | "notify" // demo: simulate a friend coming online
   | "stats" // renderer heap readout
@@ -78,7 +78,7 @@ const PAD_BUTTON_MAP: Partial<Record<number, Action>> = {
   8: "mute", // Share / View
   9: "stats", // Options / Menu
   10: "settings", // L3
-  11: "add", // R3 — the only system button left free
+  11: "add", // R3 - the only system button left free
   12: "prev", // D-pad up
   13: "next", // D-pad down
   14: "prev", // D-pad left
@@ -128,7 +128,7 @@ export function bindInput(
     fire(action);
   }
 
-  /** Fire on press, then repeat while held — one path for buttons and the stick. */
+  /** Fire on press, then repeat while held - one path for buttons and the stick. */
   function step(key: number, action: Action, down: boolean, now: number) {
     const state = held.get(key);
 

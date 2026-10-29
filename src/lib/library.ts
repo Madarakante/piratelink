@@ -389,6 +389,65 @@ export async function launchGame(dbId: number): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Local room MVP
+// ---------------------------------------------------------------------------
+
+export type Room = {
+  token: string;
+  port: number;
+  host_address: string;
+  network_id: string;
+  game: string;
+};
+
+export type ZeroTierStatus = {
+  network_id: string | null;
+  status: string;
+  address: string | null;
+  message: string;
+};
+
+export async function detectZeroTier(networkId = ""): Promise<ZeroTierStatus> {
+  if (!isTauri) {
+    return {
+      network_id: networkId.trim() || "743993800f6ed928",
+      status: "OK",
+      address: "127.0.0.1",
+      message: "Preview network detected",
+    };
+  }
+  return invoke<ZeroTierStatus>("detect_zerotier", { networkId: networkId.trim() || null });
+}
+
+export async function joinZeroTier(networkId: string): Promise<string> {
+  if (!isTauri) return "Preview join requested";
+  return invoke<string>("join_zerotier", { networkId });
+}
+
+let previewRoom: Room | null = null;
+
+export async function startRoom(game: string, networkId: string, hostAddress: string): Promise<Room> {
+  if (!isTauri) {
+    previewRoom = {
+      token: `preview-${Date.now().toString(16)}`,
+      port: 39001,
+      host_address: hostAddress.trim(),
+      network_id: networkId.trim(),
+      game: game.trim(),
+    };
+    return previewRoom;
+  }
+  return invoke<Room>("start_room", {
+    request: { game, network_id: networkId, host_address: hostAddress },
+  });
+}
+
+export async function stopRoom(): Promise<void> {
+  previewRoom = null;
+  if (isTauri) await invoke("stop_room");
+}
+
+// ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
 

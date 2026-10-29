@@ -8,6 +8,7 @@
     onToggleMute,
     onAdd,
     onSettings,
+    onRoom,
   }: {
     muted?: boolean;
     count?: number;
@@ -15,6 +16,7 @@
     onToggleMute?: () => void;
     onAdd?: () => void;
     onSettings?: () => void;
+    onRoom?: () => void;
   } = $props();
 
   let clock = $state("");
@@ -73,6 +75,10 @@
       </svg>
       Add games
     </button>
+  {/if}
+
+  {#if onRoom}
+    <button class="add" onclick={onRoom} title="Create a multiplayer room">Room</button>
   {/if}
 
   <button

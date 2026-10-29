@@ -29,7 +29,7 @@
   const backKey = $derived(device === "gamepad" ? faceButtons(family).back : "Esc");
 
   const lastPlayed = (value: string) =>
-    !value ? "—" : /^never/i.test(value) ? "Never" : value.replace(/^played\s*/i, "");
+    !value ? "-" : /^never/i.test(value) ? "Never" : value.replace(/^played\s*/i, "");
 </script>
 
 <!--
@@ -48,7 +48,7 @@
     <div class="sheet" transition:fly={{ y: 14, duration: 240 }}>
       <header>
         <span class="label">Record</span>
-        <button class="quiet" onclick={onClose}>Close — {backKey}</button>
+        <button class="quiet" onclick={onClose}>Close - {backKey}</button>
       </header>
 
       <div class="body">
@@ -72,7 +72,7 @@
           <dl class="facts">
             <div>
               <dt>Playtime</dt>
-              <dd>{game.playtimeMinutes > 0 ? credits(game.playtimeMinutes) : "—"}</dd>
+              <dd>{game.playtimeMinutes > 0 ? credits(game.playtimeMinutes) : "-"}</dd>
             </div>
             <div>
               <dt>Last played</dt>

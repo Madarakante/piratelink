@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /* ---------------------------------------------------------------------------
-   PirateLink — catalogue design system.
+   PirateLink - catalogue design system.
 
    The shelf is treated like a printed index: one strict left margin, hairline
    rules instead of boxes, monospace metadata, and the cover art carrying all of
@@ -9,7 +9,7 @@
 
    Deliberately absent: backdrop blur, accent glows, pill chips, gradient
    avatars. They are the fastest way to make a launcher look generated rather
-   than designed — and blur is the most expensive thing in the memory budget.
+   than designed - and blur is the most expensive thing in the memory budget.
 --------------------------------------------------------------------------- */
 
 @theme {
@@ -91,7 +91,7 @@ body {
   letter-spacing: 0.04em;
 }
 
-/* A panel is a solid surface with one hairline — never frosted. */
+/* A panel is a solid surface with one hairline - never frosted. */
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);

@@ -423,7 +423,7 @@ pub fn pick_best(assets: &[Asset]) -> Option<&Asset> {
         safe
     };
 
-    // Larger first, then the API's own order *within* that size — the site votes
+    // Larger first, then the API's own order *within* that size - the site votes
     // decide which 4K hero is the right one, resolution only decides that we do
     // not stretch a 1080p copy over a 1440p window while a 4K one is on offer.
     let largest = pool.iter().map(|a| a.area()).max()?;

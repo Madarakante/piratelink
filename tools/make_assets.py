@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Asset builder for PirateLink — Phase 1.
+Asset builder for PirateLink - Phase 1.
 
 Everything the launcher shows or plays at runtime is generated here, so the build
 has zero third-party asset licences to track and zero network dependency:

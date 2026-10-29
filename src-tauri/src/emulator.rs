@@ -2,7 +2,7 @@
 //!
 //! A Switch dump is not an executable: the row stores the `.nsp`/`.xci` path,
 //! and the launcher has to find the emulator that opens it. Detection is best
-//! effort and ordered — the configured path wins, then the usual install
+//! effort and ordered - the configured path wins, then the usual install
 //! locations, then a shallow scan of the drive that holds the ROM, because a
 //! portable Ryujinx usually sits next to the games (`D:\ryujinx-stable-...`).
 

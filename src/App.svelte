@@ -179,6 +179,9 @@
       case "stats":
         stats = !stats;
         break;
+      case "add":
+        if (!overlay) importOpen = true;
+        break;
     }
   }
 

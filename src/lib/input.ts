@@ -15,7 +15,8 @@ export type Action =
   | "play" // Square / X — launch directly from the shelf
   | "mute"
   | "notify" // demo: simulate a friend coming online
-  | "stats"; // renderer heap readout
+  | "stats" // renderer heap readout
+  | "add"; // open the Add games sheet
 
 export type Device = "keyboard" | "gamepad";
 export type PadFamily = "playstation" | "xbox";
@@ -74,6 +75,7 @@ const PAD_BUTTON_MAP: Partial<Record<number, Action>> = {
   5: "next", // R1
   8: "mute", // Share / View
   9: "stats", // Options / Menu
+  11: "add", // R3 — the only system button left free
   12: "prev", // D-pad up
   13: "next", // D-pad down
   14: "prev", // D-pad left

@@ -17,40 +17,44 @@
 
   const pad2 = (n: number) => String(n).padStart(2, "0");
 
+  type Hint = { key: string; label: string; add?: boolean; opt?: boolean };
+
   /**
    * The bar is a caption for whichever device was used last, so a pad owner sees
    * the pad's own button names instead of a keyboard they are not touching.
    */
-  const hints = $derived.by(() => {
+  const hints = $derived.by<Hint[]>(() => {
     if (device === "gamepad") {
       const f = faceButtons(family);
       return [
         { key: "← →", label: "Browse" },
         { key: f.confirm, label: "Info" },
         { key: f.play, label: "Play" },
-        { key: f.share, label: "Mute" },
-        { key: f.chime, label: "Chime" },
-        { key: f.menu, label: "Stats" },
+        { key: "R3", label: "Add", add: true },
+        { key: f.share, label: "Mute", opt: true },
+        { key: f.chime, label: "Chime", opt: true },
+        { key: f.menu, label: "Stats", opt: true },
       ];
     }
     return [
       { key: "← →", label: "Browse" },
       { key: "↵", label: "Info" },
       { key: "Space", label: "Play" },
-      { key: "M", label: "Mute" },
-      { key: "N", label: "Chime" },
-      { key: "F3", label: "Stats" },
+      { key: "M", label: "Mute", opt: true },
+      { key: "N", label: "Chime", opt: true },
+      { key: "F3", label: "Stats", opt: true },
     ];
   });
+
+  /** With an empty library, Add is the only thing worth advertising. */
+  const visible = $derived(total > 0 ? hints : hints.filter((h) => h.add));
 </script>
 
 <!-- Keys are plain text, not keycap boxes: the hint bar is a caption, not a toy. -->
 <footer class="hints">
-  {#if total > 0}
-    {#each hints as hint (hint.label)}
-      <span><b>{hint.key}</b>{hint.label}</span>
-    {/each}
-  {/if}
+  {#each visible as hint (hint.label)}
+    <span class:opt={hint.opt}><b>{hint.key}</b>{hint.label}</span>
+  {/each}
   <span class="spacer"></span>
 
   {#if total > 0}
@@ -129,7 +133,9 @@
     .hints {
       gap: 14px;
     }
-    .hints > span:nth-child(n + 5) {
+    /* Only the optional hints fold away; the pad light and the position stay,
+       because at this width they are the only things confirming the pad works. */
+    .hints > span.opt {
       display: none;
     }
   }

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "PirateLink main window: titlebar controls, folder picker, and library commands.",
+  "description": "PirateLink main window: titlebar controls, executable picker, and library commands.",
   "windows": ["main"],
   "permissions": [
     "core:default",

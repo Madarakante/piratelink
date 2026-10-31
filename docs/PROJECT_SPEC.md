@@ -199,7 +199,7 @@ Run and passing:
 ```
 npm run check      -> 0 errors, 0 warnings
 npm run build      -> 301 KB dist
-cargo test --release --lib -> 58 passed, 2 ignored (live)
+cargo test --release --lib -> 67 passed, 2 ignored (live)
 npx tauri build --no-bundle -> target/release/piratelink.exe
 ```
 
@@ -263,6 +263,7 @@ src-tauri/
   src/sgdb.rs             SteamGridDB client, match confidence, asset picking
   src/artwork.rs          decode / downscale / re-encode to WebP
   src/config.rs           app data dir, API key, emulator path
+  src/room.rs             room state, TCP presence, UDP discovery, ZeroTier helpers
   src/lib.rs              Tauri commands, app state, command log
   tauri.conf.json         frameless window, CSP, asset protocol, bundle config
   capabilities/           window-control and dialog permissions
@@ -321,11 +322,11 @@ Set the API key once (outside the repo, never committed):
 { "steamgriddb_api_key": "<your key>", "ryujinx_path": "<optional>\\Ryujinx.exe" }
 ```
 
-Tests: **58 unit + 2 live**. The live tests are ignored by default so the suite
+Tests: **67 unit + 2 live**. The live tests are ignored by default so the suite
 stays offline:
 
 ```powershell
-cargo test                                     # 58 passed
+cargo test                                     # 67 passed
 $env:PIRATELINK_SGDB_KEY = "..."
 cargo test --lib -- --ignored                  # 2 passed (real API, ~5 s)
 ```
@@ -412,15 +413,45 @@ the only trace.
 | `apply_artwork: <id> <- sgdb <id> cover ... hero ...` | a manual choice was written to the cache |
 | `launch_game: <title> -> <emulator> <rom>` | a Switch title was handed to Ryujinx |
 | `launch_game: no emulator for ...` | no `ryujinx_path`, no known install, and the drive scan found nothing; the toast carries the full message |
+| `sgdb: search/match/cover/hero ... failed` | the exact phase that failed for a title; covers and heroes are fetched independently, so one missing asset no longer discards the other |
 | nothing after picking a file | the Windows dialog returned nothing (you cancelled), so nothing was inspected |
 
 An import that fails (the file was deleted between picking and adding, the database
 is locked) is reported in the sheet, not the log.
 
+## Phase 4 - rooms
+
+The first shippable room path is **LAN-first**. A host creates a room for the
+selected game; the room owns a TCP listener and, unless turned off, answers LAN
+discovery probes. A guest on the same network finds the room in **Open Rooms**,
+or pastes an invite. ZeroTier is an optional transport for players who are not on
+one LAN, not a requirement.
+
+| Piece | Detail |
+| --- | --- |
+| Host address | Detected by connecting a UDP socket to a public target (no packet is sent) and reading the local address; the field stays editable because a full-tunnel VPN can make the default route the wrong interface |
+| Presence | TCP `PING` -> `PONG`; `HELLO <nickname>` -> `WELCOME`. Players are pruned after 30 s without a hello |
+| Discovery | UDP port `48765`, broadcast probe `PIRATELINK/PROBE/1\n`, reply `PIRATELINK/ROOM/1 {json}`; beacons carry a version byte, the game, host, port, network and player count; packets are capped at 1 KiB and malformed replies are ignored |
+| Discovery window | 1.2 s by default (clamped 300-3000 ms); the Open Rooms tab re-scans every 5 s |
+| Invite | `piratelink://join/<token>?host=<ip>&port=<port>[&network=<id>]`; the token identifies the room, the rest is connection detail |
+| ZeroTier | `zerotier-cli listnetworks -j` for detection; `join <network>` for one click; the guest UI polls until the network reports `OK` and an address |
+
+Discovery is **unauthenticated by design**. Anyone on the broadcast domain can
+see the game title, host address and player count, so the host can switch
+listing off per room; an invite link still works. Windows Firewall may block the
+first inbound UDP/TCP request - allow PirateLink when prompted, otherwise
+discovery and presence stay silent.
+
+Rooms are connection information, not a game protocol: the players still join
+the game's own LAN or direct-IP menu. Room state is process-local and is lost
+when PirateLink exits, and only one room host runs per machine.
+
 ## Security and privacy
 
-- **No telemetry, no update pings.** The only network traffic is SteamGridDB when
-  you add a game or open the art picker.
+- **No telemetry, no update pings.** The only internet traffic is SteamGridDB when
+  you add a game or open the art picker. Rooms add LAN-only UDP discovery and TCP
+  presence; they do not contact a server. ZeroTier traffic exists only if you
+  explicitly join a network.
 - **CSP** is set in `tauri.conf.json` (`default-src 'self'`, inline styles only,
   `blob:` allowed for audio and images). `img-src` additionally allows
   `https://*.steamgriddb.com`, because the picker lays out CDN thumbnails before
@@ -444,10 +475,11 @@ is locked) is reported in the sheet, not the log.
   baseline toward the 200 MB target
 - **UI pass** ✅ catalogue layout: no blur, no glow, no pills; art carries the colour
 - **Phase 3 - Co-op engine** ❌ dropped (see above)
-- **Phase 4 - Social & hosting** - MVP in progress: local host rooms, Create Room,
-  Join Room, Open Rooms, manual ZeroTier integration, address detection, and guest
-  network join. Next: presence, endpoint tests, game launch integration, temporary
-  networks, and invite protocol registration.
+- **Phase 4 - Social & hosting** - MVP in progress: LAN host rooms with automatic
+  address detection, Create Room / Join Room / Open Rooms, UDP discovery with an
+  invite-only switch, TCP presence (PING/HELLO), optional ZeroTier with one-click
+  join and address polling. Next: room authentication, game launch integration,
+  temporary networks, and invite protocol registration.
 
 ## License
 

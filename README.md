@@ -13,12 +13,19 @@ Phase 1 and Phase 2 are complete. The Phase 4 MVP is in progress and currently i
 - SQLite library storage
 - SteamGridDB artwork lookup, caching, and manual artwork selection
 - Ryujinx launch support for Switch titles
-- Local multiplayer rooms with Create Room, Join Room, and Open Rooms tabs
-- Manual ZeroTier network support
-- Automatic ZeroTier address detection on Windows
-- One-click guest network join after an invite is parsed
+- LAN multiplayer rooms: automatic host address detection, invite links, and
+  presence (PING/HELLO)
+- UDP room discovery on the local network, with a per-room "invite only" switch
+- Optional ZeroTier for players outside the LAN: network detection, one-click
+  join, and address polling until the network is ready
+- A Settings button that tests the SteamGridDB key end to end
 
-The host room currently runs locally and uses a manually created ZeroTier network. Temporary network creation, guest presence, endpoint testing, game launch integration, and Windows invite protocol registration are next.
+LAN rooms are the default path: both players on the same network need no account
+and no extra software. Make sure Windows Firewall allows PirateLink inbound TCP
+and UDP the first time, or discovery and presence will be silently blocked.
+ZeroTier is only needed when the players are not on one LAN. Temporary network
+creation, game launch integration, and Windows invite protocol registration are
+next.
 
 ## Quick Start
 
@@ -28,7 +35,7 @@ Requirements:
 - Node.js 20+
 - Rust 1.77+
 - WebView2
-- ZeroTier, only for multiplayer rooms
+- ZeroTier, only for rooms with players outside your LAN
 
 Install dependencies and run the development app:
 
@@ -55,7 +62,7 @@ npm run tauri:build
 
 The installer is written to `src-tauri/target/release/bundle/nsis/`.
 GitHub Actions also builds the installer and portable executable when manually
-run or when a version tag such as `v0.1.0` is pushed. Artifacts are available
+run or when a version tag such as `v0.1.2` is pushed. Artifacts are available
 from the workflow run under **Actions**.
 
 These builds are intentionally unsigned for now, so Windows SmartScreen may

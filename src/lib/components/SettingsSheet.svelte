@@ -4,6 +4,7 @@
     pickEmulator,
     revealData,
     saveSettings,
+    testSgdb,
     type GlyphChoice,
     type HeroFit,
     type Settings,
@@ -28,6 +29,7 @@
   let keyInput = $state("");
   let busy = $state<"" | "key" | "emulator" | "option">("");
   let error = $state("");
+  let probe = $state<{ ok: boolean; message: string } | null>(null);
   let refresh = $state<{ done: number; total: number } | null>(null);
 
   function mb(bytes: number): string {
@@ -43,6 +45,20 @@
       const saved = await saveSettings(next);
       onSaved(saved);
       if (next.steamgriddb_api_key !== undefined) keyInput = "";
+    } catch (err) {
+      error = String(err);
+    } finally {
+      busy = "";
+    }
+  }
+
+  async function checkKey() {
+    busy = "key";
+    error = "";
+    probe = null;
+    try {
+      const result = await testSgdb();
+      probe = { ok: result.ok, message: result.message };
     } catch (err) {
       error = String(err);
     } finally {
@@ -133,6 +149,9 @@
                   {busy === "key" ? "Saving" : "Save"}
                 </button>
                 {#if settings?.api_key_set}
+                  <button class="quiet" disabled={busy === "key"} onclick={checkKey}>
+                    {busy === "key" ? "Checking" : "Test"}
+                  </button>
                   <button
                     class="quiet"
                     disabled={busy === "key"}
@@ -145,12 +164,15 @@
             </div>
           </div>
           <p class="note">
-            {#if settings?.api_key_set}
+            {#if probe}
+              {probe.ok ? "OK" : "Failed"} — {probe.message}
+            {:else if settings?.api_key_set}
               Lookup is on. The key stays in config.json and is never sent to the page.
             {:else}
               Without a key, adding a game still works but no cover is fetched.
             {/if}
           </p>
+          {#if error}<p class="note error">{error}</p>{/if}
 
           <div class="row">
             <span class="name">Hero art</span>

@@ -1,6 +1,20 @@
 <script lang="ts">
   import { fade } from "svelte/transition";
-  import { announceRoomPlayer, detectZeroTier, joinZeroTier, pingHost, roomPlayers, startRoom, stopRoom, type Room, type RoomPlayer } from "../library";
+  import {
+    announceRoomPlayer,
+    detectLan,
+    detectZeroTier,
+    discoverRooms,
+    joinZeroTier,
+    pingHost,
+    roomPlayers,
+    startRoom,
+    stopRoom,
+    type DiscoveredRoom,
+    type LanStatus,
+    type Room,
+    type RoomPlayer,
+  } from "../library";
 
   let {
     open,
@@ -13,31 +27,70 @@
   let hostAddress = $state("");
   let mode = $state<"create" | "join" | "open">("create");
   let inviteLink = $state("");
-  let joinedInvite = $state<{ network: string; host: string; port: string } | null>(null);
+  let joinedInvite = $state<{ token: string; network: string; host: string; port: string } | null>(null);
   let busy = $state(false);
   let error = $state("");
+  let lan = $state<LanStatus | null>(null);
+  let useZeroTier = $state(false);
+  let discoverable = $state(true);
   let detection = $state("");
   let joinStatus = $state("");
   let room = $state<Room | null>(null);
-  let nickname = $state("");
+  let nickname = $state(
+    typeof localStorage === "undefined" ? "" : (localStorage.getItem("piratelink.nickname") ?? ""),
+  );
   let pingStatus = $state("");
   let players = $state<RoomPlayer[]>([]);
+  let discovered = $state<DiscoveredRoom[]>([]);
+  let discovering = $state(false);
   let copied = $state("");
+  let zeroTierTimer: ReturnType<typeof setInterval> | undefined;
 
-  async function create() {
-    busy = true;
-    error = "";
+  function stopZeroTierPoll() {
+    if (zeroTierTimer) clearInterval(zeroTierTimer);
+    zeroTierTimer = undefined;
+  }
+
+  $effect(() => {
+    if (typeof localStorage !== "undefined" && nickname.trim()) {
+      localStorage.setItem("piratelink.nickname", nickname.trim());
+    }
+  });
+
+  $effect(() => {
+    if (!open) {
+      stopZeroTierPoll();
+      return;
+    }
+    if (!hostAddress) void findLan();
+  });
+
+  $effect(() => {
+    if (!open || mode !== "open") return;
+    void refreshRooms();
+    const timer = setInterval(() => void refreshRooms(), 5000);
+    return () => clearInterval(timer);
+  });
+
+  $effect(() => {
+    if (!open || !room) return;
+    const timer = setInterval(() => {
+      void roomPlayers().then((next) => (players = next)).catch(() => {});
+    }, 2000);
+    void roomPlayers().then((next) => (players = next)).catch(() => {});
+    return () => clearInterval(timer);
+  });
+
+  async function findLan() {
     try {
-      room = await startRoom(game, networkId, hostAddress);
-      onStarted(room);
+      lan = await detectLan();
+      if (lan.address && !hostAddress) hostAddress = lan.address;
     } catch (err) {
       error = String(err);
-    } finally {
-      busy = false;
     }
   }
 
-  async function detect() {
+  async function detectZt() {
     busy = true;
     error = "";
     detection = "";
@@ -56,36 +109,91 @@
     }
   }
 
+  function toggleZeroTier(next: boolean) {
+    useZeroTier = next;
+    if (next) {
+      if (networkId.trim()) void detectZt();
+    } else {
+      hostAddress = "";
+      detection = "";
+      void findLan();
+    }
+  }
+
+  async function create() {
+    busy = true;
+    error = "";
+    try {
+      if (useZeroTier && !networkId.trim()) {
+        throw new Error("Enter a ZeroTier network ID, or turn ZeroTier off for a LAN room");
+      }
+      if (!hostAddress) await findLan();
+      const next = await startRoom(game, useZeroTier ? networkId : "", hostAddress, discoverable);
+      room = next;
+      joinedInvite = null;
+      mode = "open";
+      onStarted(next);
+      void refreshRooms();
+    } catch (err) {
+      error = String(err);
+    } finally {
+      busy = false;
+    }
+  }
+
   async function stopActiveRoom() {
     await stopRoom();
     room = null;
     mode = "open";
   }
 
-  function parseInvite() {
-    error = "";
-    joinedInvite = null;
+  async function refreshRooms() {
+    if (discovering) return;
+    discovering = true;
     try {
-      const value = inviteLink.trim();
-      if (!value.startsWith("piratelink://join/")) throw new Error("Paste a PirateLink invite link");
-      const url = new URL(value.replace("piratelink://", "https://"));
-      const network = url.searchParams.get("network") ?? "";
-      const host = url.searchParams.get("host") ?? "";
-      const port = url.searchParams.get("port") ?? "";
-      if (!network || !host || !port) throw new Error("This invite is missing connection details");
-      joinedInvite = { network, host, port };
+      discovered = await discoverRooms();
     } catch (err) {
-      error = String(err).replace(/^Error: /, "");
+      error = String(err);
+    } finally {
+      discovering = false;
+    }
+  }
+
+  function readInvite(quiet = false) {
+    if (!quiet) {
+      error = "";
+      joinedInvite = null;
+    }
+    const value = inviteLink.trim();
+    if (!value) return;
+    try {
+      if (!value.startsWith("piratelink://join")) throw new Error("Paste a PirateLink invite link");
+      const url = new URL(value.replace("piratelink://", "https://"));
+      const token = decodeURIComponent(url.pathname.replace(/^\/join\/?/, ""));
+      const host = url.searchParams.get("host") ?? "";
+      const network = url.searchParams.get("network") ?? "";
+      const port = Number(url.searchParams.get("port") ?? "");
+      if (!host || !port) throw new Error("This invite is missing connection details");
+      if (network && !/^[0-9a-fA-F]{16}$/.test(network)) {
+        throw new Error("This invite has an invalid ZeroTier network ID");
+      }
+      joinedInvite = { token, network, host, port: String(port) };
+      useZeroTier = Boolean(network);
+      if (!quiet) void ping(host, Number(port), true);
+    } catch (err) {
+      if (!quiet) error = String(err).replace(/^Error: /, "");
+      joinedInvite = null;
     }
   }
 
   async function joinNetwork() {
-    if (!joinedInvite) return;
+    if (!joinedInvite?.network) return;
     busy = true;
     error = "";
     joinStatus = "";
     try {
       joinStatus = await joinZeroTier(joinedInvite.network);
+      startZeroTierPoll(joinedInvite.network);
     } catch (err) {
       error = String(err);
     } finally {
@@ -93,16 +201,37 @@
     }
   }
 
-  async function ping(active: { host: string; port: string }) {
-    busy = true;
+  function startZeroTierPoll(network: string) {
+    stopZeroTierPoll();
+    let attempts = 0;
+    zeroTierTimer = setInterval(async () => {
+      attempts += 1;
+      try {
+        const status = await detectZeroTier(network);
+        if (status.status === "OK" && status.address) {
+          stopZeroTierPoll();
+          joinStatus = `ZeroTier is ready at ${status.address}`;
+          if (joinedInvite) void ping(joinedInvite.host, Number(joinedInvite.port), true);
+        } else if (attempts >= 30) {
+          stopZeroTierPoll();
+          joinStatus = `${status.message}. Authorize this device in ZeroTier Central, then test again.`;
+        }
+      } catch {
+        // A transient CLI failure is not fatal; the next tick retries.
+      }
+    }, 2000);
+  }
+
+  async function ping(host: string, port: number, quiet = false) {
+    if (!quiet) busy = true;
     error = "";
     try {
-      const result = await pingHost(active.host, Number(active.port));
+      const result = await pingHost(host, port);
       pingStatus = result.message;
     } catch (err) {
       error = String(err);
     } finally {
-      busy = false;
+      if (!quiet) busy = false;
     }
   }
 
@@ -119,24 +248,31 @@
   }
 
   function pingJoined() {
-    if (joinedInvite) void ping(joinedInvite);
+    if (joinedInvite) void ping(joinedInvite.host, Number(joinedInvite.port));
   }
 
   function announceJoined() {
     if (joinedInvite) void announce(joinedInvite);
   }
 
-  $effect(() => {
-    if (!open || !room) return;
-    const timer = setInterval(() => {
-      void roomPlayers().then((next) => (players = next)).catch(() => {});
-    }, 2000);
-    void roomPlayers().then((next) => (players = next)).catch(() => {});
-    return () => clearInterval(timer);
-  });
+  function invite(active: { token: string; host_address: string; port: number; network_id: string }): string {
+    const params = new URLSearchParams({
+      host: active.host_address,
+      port: String(active.port),
+    });
+    if (active.network_id) params.set("network", active.network_id);
+    return `piratelink://join/${active.token}?${params.toString()}`;
+  }
 
-  function invite(active: Room): string {
-    return `piratelink://join/${active.token}?network=${active.network_id}&host=${active.host_address}&port=${active.port}`;
+  function roomInvite(): string {
+    return room ? invite(room) : "";
+  }
+
+  function joinDiscovered(next: DiscoveredRoom) {
+    inviteLink = invite(next);
+    joinedInvite = null;
+    mode = "join";
+    readInvite();
   }
 
   async function copy(label: string, value: string) {
@@ -153,16 +289,13 @@
 
   function copyRoomValue(label: string, value: "network" | "endpoint" | "invite") {
     if (!room) return;
-    const text = value === "network"
-      ? room.network_id
-      : value === "endpoint"
-        ? `${room.host_address}:${room.port}`
-        : invite(room);
+    const text =
+      value === "network"
+        ? room.network_id
+        : value === "endpoint"
+          ? `${room.host_address}:${room.port}`
+          : invite(room);
     void copy(label, text);
-  }
-
-  function roomInvite(): string {
-    return room ? invite(room) : "";
   }
 </script>
 
@@ -170,7 +303,7 @@
   <div class="room-wrap" role="dialog" aria-modal="true" aria-label="Room" transition:fade={{ duration: 160 }}>
     <header>
       <span class="label">Phase 4 / Room</span>
-      <span class="target">Local host · manual ZeroTier</span>
+      <span class="target">LAN discovery · ZeroTier optional</span>
       <button class="quiet" onclick={onClose}>Close - Esc</button>
     </header>
 
@@ -182,11 +315,14 @@
       </div>
 
       {#if mode === "open"}
-        <p class="label">Open rooms</p>
         {#if room}
+          <p class="label">Your room</p>
           <h2>{room.game}</h2>
           <dl>
-            <div><dt>Network</dt><dd><span>{room.network_id}</span><button class="copy" onclick={() => copyRoomValue("network", "network")}>{copied === "network" ? "Copied" : "Copy"}</button></dd></div>
+            <div>
+              <dt>Path</dt>
+              <dd>{room.network_id ? `ZeroTier ${room.network_id}` : "Direct LAN"}{room.discoverable ? " · listed" : " · invite only"}</dd>
+            </div>
             <div><dt>Host endpoint</dt><dd><span>{room.host_address}:{room.port}</span><button class="copy" onclick={() => copyRoomValue("endpoint", "endpoint")}>{copied === "endpoint" ? "Copied" : "Copy"}</button></dd></div>
             <div><dt>Status</dt><dd>Waiting for players</dd></div>
           </dl>
@@ -198,7 +334,7 @@
               {/each}
             </ul>
           {:else}
-            <p class="note">No guests connected yet.</p>
+            <p class="note">No guests connected yet. A guest appears here after they announce presence.</p>
           {/if}
           <label class="label" for="invite">Invite link</label>
           <textarea id="invite" readonly value={roomInvite()}></textarea>
@@ -209,47 +345,104 @@
           </div>
           <p class="note">The room stays active while this window is closed. Stop it explicitly when the session is finished.</p>
         {:else}
-          <h2>No open rooms</h2>
-          <p class="note">Create a room and it will remain available here until you explicitly stop it or exit PirateLink.</p>
-          <button class="btn" onclick={() => (mode = "create")}>Create room</button>
+          <p class="label">Open rooms on this network</p>
+          <div class="listing">
+            <h2>{discovered.length ? `${discovered.length} room${discovered.length === 1 ? "" : "s"}` : "No rooms found"}</h2>
+            <button class="quiet" disabled={discovering} onclick={refreshRooms}>{discovering ? "Scanning" : "Scan again"}</button>
+          </div>
+          {#if discovered.length}
+            <ul class="rooms">
+              {#each discovered as next (next.token)}
+                <li>
+                  <div>
+                    <span class="game">{next.game}</span>
+                    <code>{next.host_address}:{next.port}</code>
+                  </div>
+                  <div class="room-meta">
+                    <span class="badge">{next.network_id ? "ZeroTier" : "LAN"}</span>
+                    <span>{next.players} {next.players === 1 ? "player" : "players"}</span>
+                    <button class="quiet" onclick={() => joinDiscovered(next)}>Use invite</button>
+                  </div>
+                </li>
+              {/each}
+            </ul>
+            <p class="note">Discovery hears hosts on the same broadcast network. A room created with discovery off still joins from its invite link.</p>
+          {:else}
+            <p class="note">No discoverable host answered. Both PCs must be on the same network, and Windows must allow PirateLink through the firewall. You can still join with an invite link.</p>
+            <div class="actions">
+              <button class="btn" onclick={() => (mode = "create")}>Create room</button>
+              <button class="quiet" onclick={() => (mode = "join")}>Join with invite</button>
+            </div>
+          {/if}
         {/if}
       {:else if mode === "create"}
         {#if room}
           <p class="note">A room is already active. Creating another room will replace it.</p>
         {/if}
-        <p class="label">Create local room</p>
+        <p class="label">Host on this network</p>
         <h2>{game}</h2>
-        <p class="note">The host listener runs on this PC. ZeroTier stays optional while its UDP path is being fixed.</p>
+        <p class="note">Players on the same network can find this room automatically. No ZeroTier account is needed.</p>
         {#if error}<p class="error num">{error}</p>{/if}
-        <label class="label" for="network">ZeroTier network ID</label>
-        <input id="network" class="field" bind:value={networkId} placeholder="743993800f6ed928" spellcheck="false" />
-        <label class="label" for="host">Host ZeroTier address</label>
-        <input id="host" class="field" bind:value={hostAddress} placeholder="10.39.120.10" />
-        <button class="quiet detect" disabled={busy} onclick={detect}>{busy ? "Checking ZeroTier" : "Detect ZeroTier"}</button>
-        {#if detection}<p class="note">{detection}</p>{/if}
+
+        <div class="rowline">
+          <span class="label">This PC</span>
+          <code>{hostAddress || "detecting"}</code>
+          <button class="quiet" disabled={busy} onclick={findLan}>Detect</button>
+        </div>
+        {#if lan && !lan.address}<p class="note">{lan.message}</p>{/if}
+
+        <label class="label" for="host">Host address guests dial</label>
+        <input id="host" class="field" bind:value={hostAddress} placeholder="192.168.1.20" />
+
+        <label class="check">
+          <input type="checkbox" bind:checked={discoverable} />
+          <span>List this room on the local network</span>
+        </label>
+        <label class="check">
+          <input type="checkbox" bind:checked={useZeroTier} onchange={(event) => toggleZeroTier(event.currentTarget.checked)} />
+          <span>Players outside my network (ZeroTier)</span>
+        </label>
+
+        {#if useZeroTier}
+          <label class="label" for="network">ZeroTier network ID</label>
+          <input id="network" class="field" bind:value={networkId} placeholder="743993800f6ed928" spellcheck="false" />
+          <button class="quiet detect" disabled={busy} onclick={detectZt}>{busy ? "Checking ZeroTier" : "Detect ZeroTier"}</button>
+          {#if detection}<p class="note">{detection}</p>{/if}
+        {/if}
+
         <button class="btn" disabled={busy} onclick={create}>{busy ? "Starting" : "Create room"}</button>
       {:else}
         <p class="label">Join a room</p>
         <h2>Connect to a host</h2>
-        <p class="note">Paste the invite from the host. First join the displayed network in ZeroTier, then use the host endpoint for the game.</p>
+        <p class="note">Paste the invite from the host. On the same network, Open Rooms can fill this in for you.</p>
         {#if error}<p class="error num">{error}</p>{/if}
         <label class="label" for="invite-link">Invite link</label>
-        <textarea id="invite-link" class="field" bind:value={inviteLink} placeholder="piratelink://join/..." spellcheck="false"></textarea>
-        <button class="btn" onclick={parseInvite}>Read invite</button>
+        <textarea
+          id="invite-link"
+          class="field"
+          bind:value={inviteLink}
+          oninput={() => readInvite(true)}
+          placeholder="piratelink://join/..."
+          spellcheck="false"
+        ></textarea>
+        <button class="btn" onclick={() => readInvite()}>Read invite</button>
         {#if joinedInvite}
           <dl>
-            <div><dt>Network</dt><dd>{joinedInvite.network}</dd></div>
             <div><dt>Host endpoint</dt><dd>{joinedInvite.host}:{joinedInvite.port}</dd></div>
-            <div><dt>Next step</dt><dd>Join and authorize in ZeroTier</dd></div>
+            <div><dt>Path</dt><dd>{joinedInvite.network ? `ZeroTier ${joinedInvite.network}` : "Direct LAN"}</dd></div>
           </dl>
-            <label class="label" for="nickname">PirateLink name</label>
-            <input id="nickname" class="field" bind:value={nickname} placeholder="Your nickname" maxlength="32" />
+          {#if joinedInvite.network}
             <button class="btn" disabled={busy} onclick={joinNetwork}>{busy ? "Joining ZeroTier" : "Join ZeroTier network"}</button>
-            <button class="quiet" disabled={busy} onclick={pingJoined}>{busy ? "Testing" : "Ping host"}</button>
+            {#if joinStatus}<p class="note">{joinStatus}</p>{/if}
+          {/if}
+          <label class="label" for="nickname">PirateLink name</label>
+          <input id="nickname" class="field" bind:value={nickname} placeholder="Your nickname" maxlength="32" />
+          <div class="actions">
+            <button class="quiet" disabled={busy} onclick={pingJoined}>{busy ? "Testing" : "Test connection"}</button>
             <button class="btn" disabled={busy || !nickname.trim()} onclick={announceJoined}>Announce presence</button>
-            {#if joinStatus}<p class="note">{joinStatus}. Wait for Central authorization, then check that ZeroTier shows <code>OK</code>.</p>{/if}
-            {#if pingStatus}<p class="note">{pingStatus}</p>{/if}
-            <p class="note">After ZeroTier shows <code>OK</code>, connect to the host endpoint from the game.</p>
+          </div>
+          {#if pingStatus}<p class="note">{pingStatus}</p>{/if}
+          <p class="note">Then connect to <code>{joinedInvite.host}:{joinedInvite.port}</code> from the game's LAN or direct-IP menu.</p>
         {/if}
       {/if}
     </div>
@@ -257,11 +450,11 @@
 {/if}
 
 <style>
-  .room-wrap { position: fixed; inset: 0; z-index: 80; display: grid; grid-template-rows: var(--rail) 1fr; background: rgba(13, 15, 18, .97); }
+  .room-wrap { position: fixed; inset: 0; z-index: 80; display: grid; grid-template-rows: var(--rail) 1fr; background: rgba(13, 15, 18, .97); overflow: auto; }
   header { display: flex; align-items: center; gap: 18px; padding: 0 var(--gutter); border-bottom: 1px solid var(--line); }
   .target { color: var(--ink-faint); font-family: var(--font-mono); font-size: 10px; }
   header .quiet { margin-left: auto; }
-  .room-body { width: min(620px, calc(100vw - 48px)); margin: 9vh auto; display: grid; align-content: start; gap: 14px; }
+  .room-body { width: min(620px, calc(100vw - 48px)); margin: 7vh auto 9vh; display: grid; align-content: start; gap: 14px; }
   h2 { margin: 0 0 12px; font-size: 36px; letter-spacing: -.04em; }
   .field, textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: 2px; background: rgba(255,255,255,.04); color: var(--ink); padding: 11px 12px; font: 12px var(--font-mono); }
   textarea { min-height: 82px; resize: vertical; }
@@ -279,7 +472,21 @@
   .danger { color: #ff9a8f; }
   .players { list-style: none; margin: 0 0 12px; padding: 0; border-top: 1px solid var(--line); }
   .players li { display: flex; justify-content: space-between; gap: 18px; padding: 9px 0; border-bottom: 1px solid var(--line); color: var(--ink); font: 11px var(--font-mono); }
-  .players code { color: var(--ink-faint); }
+  .players code, code { color: var(--ink-faint); font-family: var(--font-mono); }
   .copy { border: 0; background: transparent; color: var(--ink-faint); padding: 0; font: 9px var(--font-mono); text-transform: uppercase; cursor: pointer; }
   .copy:hover { color: var(--ink); }
+  .rowline { display: flex; align-items: center; gap: 14px; padding: 10px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .rowline .label { margin-right: 2px; }
+  .rowline code { flex: 1; font-size: 12px; }
+  .check { display: flex; align-items: center; gap: 10px; color: var(--ink-dim); font: 11px var(--font-mono); cursor: pointer; }
+  .check input { accent-color: var(--ink); }
+  .listing { display: flex; align-items: baseline; gap: 18px; }
+  .listing h2 { flex: 1; }
+  .rooms { list-style: none; margin: 6px 0 0; padding: 0; border-top: 1px solid var(--line); }
+  .rooms li { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .rooms li > div { display: grid; gap: 4px; min-width: 0; }
+  .rooms .game { font: 14px var(--font-display); color: var(--ink); }
+  .rooms code { font-size: 10px; }
+  .room-meta { display: flex; align-items: center; gap: 14px; color: var(--ink-faint); font: 10px var(--font-mono); white-space: nowrap; }
+  .badge { border: 1px solid var(--line-strong); border-radius: 2px; padding: 3px 6px; color: var(--ink-dim); font-size: 9px; letter-spacing: .1em; text-transform: uppercase; }
 </style>

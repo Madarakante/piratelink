@@ -398,6 +398,7 @@ export type Room = {
   host_address: string;
   network_id: string;
   game: string;
+  discoverable: boolean;
 };
 
 export type RoomPlayer = {
@@ -417,6 +418,44 @@ export type ZeroTierStatus = {
   address: string | null;
   message: string;
 };
+
+export type LanStatus = {
+  address: string | null;
+  message: string;
+};
+
+/** A room announcement heard on the local network. */
+export type DiscoveredRoom = {
+  token: string;
+  game: string;
+  host_address: string;
+  port: number;
+  network_id: string;
+  players: number;
+};
+
+export async function detectLan(): Promise<LanStatus> {
+  if (!isTauri) {
+    return { address: "192.168.1.20", message: "This PC is 192.168.1.20 on the local network" };
+  }
+  return invoke<LanStatus>("detect_lan");
+}
+
+export async function discoverRooms(timeoutMs = 1200): Promise<DiscoveredRoom[]> {
+  if (!isTauri) {
+    return [
+      {
+        token: "preview-lan",
+        game: "Hades",
+        host_address: "192.168.1.42",
+        port: 39001,
+        network_id: "",
+        players: 2,
+      },
+    ];
+  }
+  return invoke<DiscoveredRoom[]>("discover_rooms", { timeoutMs });
+}
 
 export async function detectZeroTier(networkId = ""): Promise<ZeroTierStatus> {
   if (!isTauri) {
@@ -452,25 +491,45 @@ export async function roomPlayers(): Promise<RoomPlayer[]> {
 
 let previewRoom: Room | null = null;
 
-export async function startRoom(game: string, networkId: string, hostAddress: string): Promise<Room> {
+export async function startRoom(
+  game: string,
+  networkId = "",
+  hostAddress = "",
+  discoverable = true,
+): Promise<Room> {
   if (!isTauri) {
     previewRoom = {
       token: `preview-${Date.now().toString(16)}`,
       port: 39001,
-      host_address: hostAddress.trim(),
+      host_address: hostAddress.trim() || "192.168.1.20",
       network_id: networkId.trim(),
       game: game.trim(),
+      discoverable,
     };
     return previewRoom;
   }
   return invoke<Room>("start_room", {
-    request: { game, network_id: networkId, host_address: hostAddress },
+    request: { game, network_id: networkId, host_address: hostAddress, discoverable },
   });
 }
 
 export async function stopRoom(): Promise<void> {
   previewRoom = null;
   if (isTauri) await invoke("stop_room");
+}
+
+export type SgdbProbe = {
+  ok: boolean;
+  message: string;
+  results: number;
+};
+
+/** Settings-screen check: search, list covers, download one. */
+export async function testSgdb(): Promise<SgdbProbe> {
+  if (!isTauri) {
+    return { ok: true, message: "Preview: SteamGridDB answered, cover downloaded (12 KB)", results: 3 };
+  }
+  return invoke<SgdbProbe>("test_sgdb");
 }
 
 // ---------------------------------------------------------------------------

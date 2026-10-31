@@ -2,18 +2,15 @@ mod artwork;
 mod config;
 mod db;
 mod emulator;
+mod room;
 mod scanner;
 mod sgdb;
 
 use std::collections::HashSet;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::net::TcpListener;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::thread;
+use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
@@ -52,51 +49,6 @@ struct AppState {
     /// runtime; every reader takes a short lock and clones what it needs.
     config: std::sync::RwLock<Config>,
     sgdb: Sgdb,
-    room: Mutex<Option<RoomRuntime>>,
-}
-
-struct RoomRuntime {
-    token: String,
-    port: u16,
-    stop: Arc<AtomicBool>,
-    players: Arc<Mutex<Vec<RoomPlayer>>>,
-}
-
-#[derive(Clone, Serialize)]
-struct RoomPlayer {
-    nickname: String,
-    address: String,
-    last_seen: u64,
-}
-
-#[derive(Serialize)]
-struct PingResult {
-    reachable: bool,
-    message: String,
-}
-
-#[derive(Serialize)]
-struct RoomView {
-    token: String,
-    port: u16,
-    host_address: String,
-    network_id: String,
-    game: String,
-}
-
-#[derive(Deserialize)]
-struct StartRoom {
-    game: String,
-    network_id: String,
-    host_address: String,
-}
-
-#[derive(Serialize)]
-struct ZeroTierStatus {
-    network_id: Option<String>,
-    status: String,
-    address: Option<String>,
-    message: String,
 }
 
 impl AppState {
@@ -107,281 +59,6 @@ impl AppState {
 
 fn to_string_err<E: std::fmt::Display>(err: E) -> String {
     err.to_string()
-}
-
-fn room_token() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|value| value.as_nanos())
-        .unwrap_or_default();
-    format!("{:x}-{:x}", now, std::process::id())
-}
-
-#[tauri::command]
-fn detect_zerotier(network_id: Option<String>) -> Result<ZeroTierStatus, String> {
-    let cli = [
-        PathBuf::from(r"C:\Program Files (x86)\ZeroTier\One\zerotier-cli.bat"),
-        PathBuf::from(r"C:\Program Files\ZeroTier\One\zerotier-cli.bat"),
-    ]
-    .into_iter()
-    .find(|path| path.is_file())
-    .unwrap_or_else(|| PathBuf::from("zerotier-cli"));
-    let output = Command::new(&cli)
-        .args(["-j", "listnetworks"])
-        .output()
-        .map_err(|error| format!("could not run {}: {error}", cli.display()))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
-
-    let networks: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("could not read ZeroTier response: {error}"))?;
-    let wanted = network_id.as_deref().map(str::trim).filter(|value| !value.is_empty());
-    let selected = networks
-        .as_array()
-        .and_then(|items| items.iter().find(|item| {
-            let matches_id = wanted.is_none_or(|id| item.get("nwid").and_then(|value| value.as_str()) == Some(id));
-            matches_id && item.get("status").and_then(|value| value.as_str()) == Some("OK")
-        }))
-        .or_else(|| networks.as_array().and_then(|items| items.first()));
-
-    let Some(network) = selected else {
-        return Ok(ZeroTierStatus {
-            network_id: None,
-            status: "NOT_FOUND".to_string(),
-            address: None,
-            message: "No ZeroTier networks are joined".to_string(),
-        });
-    };
-
-    let id = network.get("nwid").and_then(|value| value.as_str()).map(str::to_string);
-    let status = network
-        .get("status")
-        .and_then(|value| value.as_str())
-        .unwrap_or("UNKNOWN")
-        .to_string();
-    let address = network
-        .get("assignedAddresses")
-        .and_then(|value| value.as_array())
-        .and_then(|values| values.iter().find_map(|value| {
-            let address = value.as_str()?.split('/').next()?;
-            address.starts_with("10.").then(|| address.to_string())
-        }));
-    let message = if status == "OK" && address.is_some() {
-        "ZeroTier network is ready".to_string()
-    } else {
-        format!("ZeroTier network status: {status}")
-    };
-
-    Ok(ZeroTierStatus { network_id: id, status, address, message })
-}
-
-#[tauri::command]
-fn join_zerotier(network_id: String) -> Result<String, String> {
-    let network_id = network_id.trim();
-    if !network_id.chars().all(|ch| ch.is_ascii_hexdigit()) || network_id.len() != 16 {
-        return Err("ZeroTier network ID must be 16 hexadecimal characters".to_string());
-    }
-
-    let cli = [
-        PathBuf::from(r"C:\Program Files (x86)\ZeroTier\One\zerotier-cli.bat"),
-        PathBuf::from(r"C:\Program Files\ZeroTier\One\zerotier-cli.bat"),
-    ]
-    .into_iter()
-    .find(|path| path.is_file())
-    .unwrap_or_else(|| PathBuf::from("zerotier-cli.bat"));
-
-    let output = if cli.is_file() {
-        Command::new("cmd")
-            .args(["/C", cli.to_string_lossy().as_ref(), "join", network_id])
-            .output()
-    } else {
-        Command::new("zerotier-cli").args(["join", network_id]).output()
-    }
-    .map_err(|error| format!("could not run ZeroTier: {error}"))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if !output.status.success() {
-        return Err(if stderr.is_empty() { stdout } else { stderr });
-    }
-    Ok(if stdout.is_empty() { "ZeroTier join requested".to_string() } else { stdout })
-}
-
-fn now_seconds() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|value| value.as_secs())
-        .unwrap_or_default()
-}
-
-fn prune_players(players: &mut Vec<RoomPlayer>) {
-    let cutoff = now_seconds().saturating_sub(30);
-    players.retain(|player| player.last_seen >= cutoff);
-}
-
-#[tauri::command]
-fn ping_host(host: String, port: u16) -> Result<PingResult, String> {
-    let address = format!("{}:{}", host.trim(), port);
-    match TcpStream::connect_timeout(
-        &address.parse().map_err(|error| format!("invalid host address: {error}"))?,
-        std::time::Duration::from_secs(3),
-    ) {
-        Ok(mut stream) => {
-            stream
-                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
-                .map_err(to_string_err)?;
-            stream.write_all(b"PING\n").map_err(to_string_err)?;
-            let mut response = [0_u8; 16];
-            let read = stream.read(&mut response).map_err(to_string_err)?;
-            let reachable = &response[..read] == b"PONG\n";
-            Ok(PingResult {
-                reachable,
-                message: if reachable {
-                    format!("Host reachable at {address}")
-                } else {
-                    "Host answered unexpectedly".to_string()
-                },
-            })
-        }
-        Err(error) => Ok(PingResult {
-            reachable: false,
-            message: format!("Host unreachable at {address}: {error}"),
-        }),
-    }
-}
-
-#[tauri::command]
-fn announce_room_player(host: String, port: u16, nickname: String) -> Result<String, String> {
-    let nickname = nickname.trim();
-    if nickname.is_empty() || nickname.len() > 32 {
-        return Err("nickname must contain 1 to 32 characters".to_string());
-    }
-    let address = format!("{}:{}", host.trim(), port);
-    let mut stream = TcpStream::connect_timeout(
-        &address.parse().map_err(|error| format!("invalid host address: {error}"))?,
-        std::time::Duration::from_secs(3),
-    )
-    .map_err(|error| format!("could not reach host: {error}"))?;
-    stream
-        .set_read_timeout(Some(std::time::Duration::from_secs(3)))
-        .map_err(to_string_err)?;
-    stream
-        .write_all(format!("HELLO {}\n", nickname.replace(['\r', '\n'], " ")).as_bytes())
-        .map_err(to_string_err)?;
-    let mut response = String::new();
-    BufReader::new(stream)
-        .read_line(&mut response)
-        .map_err(to_string_err)?;
-    if response.trim() == "WELCOME" {
-        Ok("Connected to room host".to_string())
-    } else {
-        Err(format!("host rejected presence: {}", response.trim()))
-    }
-}
-
-#[tauri::command]
-fn room_players(state: tauri::State<'_, AppState>) -> Result<Vec<RoomPlayer>, String> {
-    let room = state.room.lock().unwrap_or_else(|error| error.into_inner());
-    let Some(active) = room.as_ref() else { return Ok(Vec::new()); };
-    let mut players = active.players.lock().unwrap_or_else(|error| error.into_inner());
-    prune_players(&mut players);
-    Ok(players.clone())
-}
-
-#[tauri::command]
-fn start_room(request: StartRoom, state: tauri::State<'_, AppState>) -> Result<RoomView, String> {
-    let game = request.game.trim();
-    let network_id = request.network_id.trim();
-    let host_address = request.host_address.trim();
-    if game.is_empty() || network_id.is_empty() || host_address.is_empty() {
-        return Err("game, ZeroTier network ID, and host address are required".to_string());
-    }
-    if !network_id.chars().all(|ch| ch.is_ascii_hexdigit()) || network_id.len() != 16 {
-        return Err("ZeroTier network ID must be 16 hexadecimal characters".to_string());
-    }
-
-    let listener = TcpListener::bind("0.0.0.0:0").map_err(to_string_err)?;
-    listener.set_nonblocking(true).map_err(to_string_err)?;
-    let port = listener.local_addr().map_err(to_string_err)?.port();
-    let stop = Arc::new(AtomicBool::new(false));
-    let players = Arc::new(Mutex::new(Vec::new()));
-    let stop_thread = Arc::clone(&stop);
-    let players_thread = Arc::clone(&players);
-    thread::spawn(move || {
-        while !stop_thread.load(Ordering::Relaxed) {
-            match listener.accept() {
-                Ok((mut stream, address)) => {
-                    let mut line = String::new();
-                    let read = stream
-                        .try_clone()
-                        .ok()
-                        .map(|clone| BufReader::new(clone).read_line(&mut line).unwrap_or(0))
-                        .unwrap_or(0);
-                    if read == 0 {
-                        continue;
-                    }
-                    if line.trim() == "PING" {
-                        let _ = stream.write_all(b"PONG\n");
-                        continue;
-                    }
-                    if let Some(nickname) = line.strip_prefix("HELLO ") {
-                        let nickname = nickname.trim().to_string();
-                        if nickname.is_empty() || nickname.len() > 32 {
-                            let _ = stream.write_all(b"REJECTED\n");
-                            continue;
-                        }
-                        let mut known = players_thread.lock().unwrap_or_else(|error| error.into_inner());
-                        prune_players(&mut known);
-                        let entry = RoomPlayer {
-                            nickname,
-                            address: address.ip().to_string(),
-                            last_seen: now_seconds(),
-                        };
-                        if let Some(existing) = known.iter_mut().find(|player| player.address == entry.address) {
-                            *existing = entry;
-                        } else {
-                            known.push(entry);
-                        }
-                        let _ = stream.write_all(b"WELCOME\n");
-                        log_line(&format!("room: presence from {}", address));
-                    }
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(std::time::Duration::from_millis(100));
-                }
-                Err(error) => {
-                    log_line(&format!("room: listener stopped: {error}"));
-                    break;
-                }
-            }
-        }
-    });
-
-    let token = room_token();
-    let view = RoomView {
-        token: token.clone(),
-        port,
-        host_address: host_address.to_string(),
-        network_id: network_id.to_string(),
-        game: game.to_string(),
-    };
-    let mut room = state.room.lock().unwrap_or_else(|error| error.into_inner());
-    if let Some(previous) = room.replace(RoomRuntime { token, port, stop, players }) {
-        previous.stop.store(true, Ordering::Relaxed);
-    }
-    log_line(&format!("room: started {} on {}:{}", game, host_address, port));
-    Ok(view)
-}
-
-#[tauri::command]
-fn stop_room(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let mut room = state.room.lock().unwrap_or_else(|error| error.into_inner());
-    if let Some(active) = room.take() {
-        active.stop.store(true, Ordering::Relaxed);
-        log_line(&format!("room: stopped {}:{}", active.token, active.port));
-    }
-    Ok(())
 }
 
 // -- library ---------------------------------------------------------------
@@ -622,6 +299,84 @@ fn sgdb_status(state: tauri::State<'_, AppState>) -> SgdbStatus {
     }
 }
 
+#[derive(Serialize)]
+struct SgdbProbe {
+    ok: bool,
+    message: String,
+    results: usize,
+}
+
+/// End-to-end check for the Settings screen: search, list covers, and download
+/// the first thumbnail. Everything the automatic artwork path does, minus a
+/// library row, so a failure is attributable to SteamGridDB or the key rather
+/// than to a title's match confidence.
+#[tauri::command]
+async fn test_sgdb(state: tauri::State<'_, AppState>) -> Result<SgdbProbe, String> {
+    if !state.sgdb.has_key() {
+        return Ok(SgdbProbe {
+            ok: false,
+            message: "No SteamGridDB API key is configured".to_string(),
+            results: 0,
+        });
+    }
+
+    let matches = match state.sgdb.search("Hades").await {
+        Ok(matches) => matches,
+        Err(error) => {
+            log_line(&format!("sgdb: key test search failed: {error}"));
+            return Ok(SgdbProbe {
+                ok: false,
+                message: format!("Search failed: {error}"),
+                results: 0,
+            });
+        }
+    };
+    let Some(best) = sgdb::best_match("Hades", &matches) else {
+        return Ok(SgdbProbe {
+            ok: false,
+            message: format!("Search answered but returned {} weak results", matches.len()),
+            results: matches.len(),
+        });
+    };
+    let grids = match state.sgdb.grids(best.id, None).await {
+        Ok(grids) => grids,
+        Err(error) => {
+            log_line(&format!("sgdb: key test grids failed: {error}"));
+            return Ok(SgdbProbe {
+                ok: false,
+                message: format!("Cover lookup failed: {error}"),
+                results: matches.len(),
+            });
+        }
+    };
+    let Some(asset) = pick_best(&grids) else {
+        return Ok(SgdbProbe {
+            ok: false,
+            message: "SteamGridDB has no covers for its own test title".to_string(),
+            results: matches.len(),
+        });
+    };
+    match state.sgdb.fetch_bytes(&asset.url).await {
+        Ok(bytes) => Ok(SgdbProbe {
+            ok: true,
+            message: format!(
+                "SteamGridDB answered: {} results, cover downloaded ({} KB)",
+                matches.len(),
+                bytes.len() / 1024
+            ),
+            results: matches.len(),
+        }),
+        Err(error) => {
+            log_line(&format!("sgdb: key test download failed: {error}"));
+            Ok(SgdbProbe {
+                ok: false,
+                message: format!("Cover download failed: {error}"),
+                results: matches.len(),
+            })
+        }
+    }
+}
+
 /// Resolves a library entry against SteamGridDB and caches the chosen art.
 ///
 /// Failures are non-fatal for the caller: a game without artwork still belongs in
@@ -638,18 +393,26 @@ async fn fetch_artwork(id: i64, state: tauri::State<'_, AppState>) -> Result<Art
         return Err("SteamGridDB API key not configured".to_string());
     }
 
-    let matches = state.sgdb.search(&game.title).await.map_err(to_string_err)?;
+    let matches = match state.sgdb.search(&game.title).await {
+        Ok(matches) => matches,
+        Err(error) => {
+            log_line(&format!("sgdb: search \"{}\" failed: {error}", game.title));
+            return Err(format!("SteamGridDB search failed: {error}"));
+        }
+    };
 
     // Only proceed on a match that is actually close to the library title. A wrong
     // cover is silent and gets cached, which is worse than leaving the game without
     // artwork and telling the user why.
     let best = sgdb::best_match(&game.title, &matches).ok_or_else(|| {
-        format!(
+        let message = format!(
             "no confident SteamGridDB match for \"{}\" ({} result{} searched) - artwork was left unchanged",
             game.title,
             matches.len(),
             if matches.len() == 1 { "" } else { "s" }
-        )
+        );
+        log_line(&format!("sgdb: match \"{}\" refused: {message}", game.title));
+        message
     })?;
 
     let art_dir = state.config().art_dir();
@@ -660,27 +423,72 @@ async fn fetch_artwork(id: i64, state: tauri::State<'_, AppState>) -> Result<Art
         cover: None,
         hero: None,
     };
+    // A failed cover must not discard a good hero (or the reverse). Collect the
+    // reasons and only fail when neither side produced a file.
+    let mut failures: Vec<String> = Vec::new();
 
-    if let Some(asset) = pick_best(&state.sgdb.grids(best.id, None).await.map_err(to_string_err)?) {
-        let bytes = state.sgdb.fetch_bytes(&asset.url).await.map_err(to_string_err)?;
-        let file = artwork::store(
-            &bytes,
-            &art_dir,
-            &format!("{id}-cover"),
-            artwork::COVER_MAX_WIDTH,
-        )?;
-        artwork.cover = Some(file.to_string_lossy().to_string());
+    match state.sgdb.grids(best.id, None).await {
+        Ok(assets) => match pick_best(&assets) {
+            Some(asset) => match state.sgdb.fetch_bytes(&asset.url).await {
+                Ok(bytes) => match artwork::store(
+                    &bytes,
+                    &art_dir,
+                    &format!("{id}-cover"),
+                    artwork::COVER_MAX_WIDTH,
+                ) {
+                    Ok(file) => artwork.cover = Some(file.to_string_lossy().to_string()),
+                    Err(error) => {
+                        log_line(&format!("sgdb: cover decode for \"{}\" failed: {error}", game.title));
+                        failures.push(format!("cover could not be decoded: {error}"));
+                    }
+                },
+                Err(error) => {
+                    log_line(&format!("sgdb: cover download for \"{}\" failed: {error}", game.title));
+                    failures.push(format!("cover download failed: {error}"));
+                }
+            },
+            None => failures.push("no cover offered".to_string()),
+        },
+        Err(error) => {
+            log_line(&format!("sgdb: cover list for \"{}\" failed: {error}", game.title));
+            failures.push(format!("cover list failed: {error}"));
+        }
     }
 
-    if let Some(asset) = pick_best(&state.sgdb.heroes(best.id).await.map_err(to_string_err)?) {
-        let bytes = state.sgdb.fetch_bytes(&asset.url).await.map_err(to_string_err)?;
-        let file = artwork::store(
-            &bytes,
-            &art_dir,
-            &format!("{id}-hero"),
-            artwork::HERO_MAX_WIDTH,
-        )?;
-        artwork.hero = Some(file.to_string_lossy().to_string());
+    match state.sgdb.heroes(best.id).await {
+        Ok(assets) => match pick_best(&assets) {
+            Some(asset) => match state.sgdb.fetch_bytes(&asset.url).await {
+                Ok(bytes) => match artwork::store(
+                    &bytes,
+                    &art_dir,
+                    &format!("{id}-hero"),
+                    artwork::HERO_MAX_WIDTH,
+                ) {
+                    Ok(file) => artwork.hero = Some(file.to_string_lossy().to_string()),
+                    Err(error) => {
+                        log_line(&format!("sgdb: hero decode for \"{}\" failed: {error}", game.title));
+                        failures.push(format!("hero could not be decoded: {error}"));
+                    }
+                },
+                Err(error) => {
+                    log_line(&format!("sgdb: hero download for \"{}\" failed: {error}", game.title));
+                    failures.push(format!("hero download failed: {error}"));
+                }
+            },
+            None => failures.push("no hero offered".to_string()),
+        },
+        Err(error) => {
+            log_line(&format!("sgdb: hero list for \"{}\" failed: {error}", game.title));
+            failures.push(format!("hero list failed: {error}"));
+        }
+    }
+
+    if artwork.cover.is_none() && artwork.hero.is_none() {
+        return Err(if failures.is_empty() {
+            "SteamGridDB returned no usable artwork".to_string()
+        } else {
+            failures.join("; ")
+        });
     }
 
     state
@@ -1193,8 +1001,8 @@ pub fn run() {
                 db,
                 config: std::sync::RwLock::new(config),
                 sgdb,
-                room: Mutex::new(None),
             });
+            app.manage(room::RoomState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1207,6 +1015,7 @@ pub fn run() {
             inspect_file,
             remove_game,
             sgdb_status,
+            test_sgdb,
             fetch_artwork,
             search_artwork,
             artwork_choices,
@@ -1216,13 +1025,15 @@ pub fn run() {
             get_settings,
             save_settings,
             reveal_data,
-            detect_zerotier,
-            join_zerotier,
-            ping_host,
-            announce_room_player,
-            room_players,
-            start_room,
-            stop_room,
+            room::detect_lan,
+            room::discover_rooms,
+            room::detect_zerotier,
+            room::join_zerotier,
+            room::ping_host,
+            room::announce_room_player,
+            room::room_players,
+            room::start_room,
+            room::stop_room,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PirateLink");

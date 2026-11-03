@@ -352,7 +352,7 @@ pub fn clean_title(folder: &str) -> String {
 
     let noise: &[&str] = &[
         "fitgirl", "repack", "codex", "plaza", "skidrow", "elamigos", "gog", "razor1911",
-        "reloaded", "cpy", "goldberg", "online", "multiplayer", "portable", "win64", "win32",
+        "reloaded", "cpy", "online", "multiplayer", "portable", "win64", "win32",
         "update", "hotfix", "dlc", "rip", "proper", "cracked", "rus", "eng", "multi",
     ];
 

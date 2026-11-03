@@ -96,11 +96,9 @@ supplied by `PIRATELINK_SGDB_KEY` is never persisted by opening this page.
 
 ## What is deliberately *not* in the box
 
-The Goldberg / `gbe_fork` auto-injector from the original plan (Phase 3) is not
-implemented and will not be. `gbe_fork` exists to satisfy Steam's ownership check
-for copies the user does not own, so a one-click injector with backup/restore is
-DRM circumvention rather than a launcher feature. The other four phases stand on
-their own and are unaffected.
+The launcher does not bypass ownership checks, inject DRM workarounds, or patch game
+binaries. It starts games the user already has and connects players; it is not a
+piracy tool. The other milestones stand on their own and are unaffected.
 
 ---
 
@@ -290,11 +288,8 @@ tools/
 | Cloudflare Quick Tunnels | Not yet implemented | They mint a random hostname per restart and are explicitly not for production, which is the wrong fit for a presence endpoint clients must reach repeatedly |
 | Local `.ogg` from Pixabay/Freesound | Generated from oscillators | Zero licences, zero attribution, reproducible from source |
 
-Two details worth carrying into Phase 4:
+One detail worth carrying into Phase 4:
 
-- **Bincode**: pin the major version. Bincode 2 replaced `serialize`/`deserialize`
-  with `Encode`/`Decode`, so 1.x examples will not compile. Cap frame size and
-  version the packet enum before parsing anything off a socket.
 - **Presence needs auth before a tunnel.** Nothing in the original plan proved a
   client was a particular account, and a public WebSocket accepts anyone who finds
   the URL.
@@ -474,7 +469,6 @@ when PirateLink exits, and only one room host runs per machine.
 - **Memory pass** - next: re-measure against a build, then work from the 461 MB
   baseline toward the 200 MB target
 - **UI pass** ✅ catalogue layout: no blur, no glow, no pills; art carries the colour
-- **Phase 3 - Co-op engine** ❌ dropped (see above)
 - **Phase 4 - Social & hosting** - MVP in progress: LAN host rooms with automatic
   address detection, Create Room / Join Room / Open Rooms, UDP discovery with an
   invite-only switch, TCP presence (PING/HELLO), optional ZeroTier with one-click
